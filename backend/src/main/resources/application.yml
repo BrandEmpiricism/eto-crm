@@ -1,0 +1,19 @@
+spring:
+  application:
+    name: eto-crm
+  threads:
+    virtual:
+      enabled: true
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+server:
+  error:
+    include-message: never
+
