@@ -1,4 +1,6 @@
 # Frontend
 
-The React application is intentionally not generated beyond its package contract in this checkpoint. Product navigation and screen structure should follow an approved low-fidelity workflow for CRM-001 rather than a generic dashboard template.
+React, TypeScript, and Vite application shell for ETO CRM. Run `npm install` and `npm run dev` for local development.
+
+The initial screen communicates the ETO workflow without introducing a generic CRM dashboard. Feature screens should follow accepted briefs and validated low-fidelity workflows.
 
