@@ -5,10 +5,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.AfterEach;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 @SpringBootTest
 class TenantMembershipTest {
@@ -16,6 +21,20 @@ class TenantMembershipTest {
 
     @Autowired IdentityApplicationApi identities;
     @Autowired @Qualifier("platformJdbcTemplate") JdbcTemplate database;
+
+    @BeforeEach
+    void authorizeMembershipAdministration() {
+        var authorities = java.util.List.of(
+            new SimpleGrantedAuthority(Permissions.PLATFORM_OPERATE),
+            new SimpleGrantedAuthority(Permissions.TENANT_ADMINISTER));
+        SecurityContextHolder.getContext().setAuthentication(
+            new UsernamePasswordAuthenticationToken("membership-admin", null, authorities));
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     void activeMembershipSelectsExactlyOneTenantAndRecordsTheDecision() {

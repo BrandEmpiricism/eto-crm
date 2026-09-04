@@ -8,12 +8,13 @@ import java.util.List;
 import java.util.UUID;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 @Service
 public class AccountService implements AccountApplicationApi {
     private final AccountRepository accounts; private final ContactService contacts;
     AccountService(AccountRepository accounts,ContactService contacts){this.accounts=accounts;this.contacts=contacts;}
-    @Override @Transactional public AccountRef createAccount(CreateAccount command,String actor){
+    @Override @Transactional @PreAuthorize("hasAuthority('crm:write')") public AccountRef createAccount(CreateAccount command,String actor){
         var now=Instant.now();var entity=new AccountEntity(UUID.randomUUID(),required(command.name()),required(command.industry()),required(command.location()),website(command.website()),clean(command.owner()),clean(command.summary()),now,actor);
         accounts.save(entity);for(var contact:safe(command.contacts()))contacts.create(entity.id,contact,actor);return view(entity);
     }

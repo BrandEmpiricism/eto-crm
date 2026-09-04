@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 /** Identity-provider-neutral application API for tenant membership decisions. */
 @Service
@@ -17,6 +18,7 @@ public class IdentityApplicationApi {
     }
 
     @Transactional("platformTransactionManager")
+    @PreAuthorize("hasAuthority('platform:operate')")
     public void assignInitialAdministrator(UUID tenantId, String actorId) {
         requireActor(actorId);
         ensureIdentity(actorId);
@@ -33,6 +35,7 @@ public class IdentityApplicationApi {
     }
 
     @Transactional("platformTransactionManager")
+    @PreAuthorize("isAuthenticated()")
     public TenantContext selectTenant(String actorId, UUID tenantId) {
         requireActor(actorId);
         var memberships = database.query(
@@ -47,6 +50,7 @@ public class IdentityApplicationApi {
     }
 
     @Transactional("platformTransactionManager")
+    @PreAuthorize("hasAuthority('tenant:administer')")
     public void changeRole(String actorId, String memberId, UUID tenantId, CompanyRole role) {
         requireActor(actorId);
         int changed = database.update(
@@ -57,6 +61,7 @@ public class IdentityApplicationApi {
     }
 
     @Transactional("platformTransactionManager")
+    @PreAuthorize("hasAuthority('tenant:administer')")
     public void disableMembership(String actorId, String memberId, UUID tenantId) {
         requireActor(actorId);
         int changed = database.update(

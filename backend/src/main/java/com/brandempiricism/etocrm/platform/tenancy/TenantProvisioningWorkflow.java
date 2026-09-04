@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.security.access.prepost.PreAuthorize;
 
 @Service
 class TenantProvisioningWorkflow {
@@ -31,6 +32,7 @@ class TenantProvisioningWorkflow {
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
+    @PreAuthorize("hasAuthority('platform:operate')")
     TenantProvisioningService.TenantView provision(UUID tenantId, String actorId) {
         try {
             var tenant = load(tenantId);
