@@ -72,6 +72,24 @@ class TenantMembershipTest {
         assertThat(auditCount("membership-admin", "tenant_membership.role_changed")).isEqualTo(1);
     }
 
+    @Test
+    void tenantServiceIdentityRequiresMembershipAndRecordsJobAuthorization() {
+        identities.assignInitialAdministrator(TENANT_ID, "service:outbox-test");
+
+        var context = identities.selectTenantForService("service:outbox-test", TENANT_ID);
+
+        assertThat(context.actorId()).isEqualTo("service:outbox-test");
+        assertThat(auditCount("service:outbox-test", "tenant_job.context_authorized")).isEqualTo(1);
+    }
+
+    @Test
+    void ordinaryIdentityCannotBeUsedAsABackgroundService() {
+        identities.assignInitialAdministrator(TENANT_ID, "ordinary-user");
+        assertThatThrownBy(() -> identities.selectTenantForService("ordinary-user", TENANT_ID))
+            .isInstanceOf(TenantAccessDeniedException.class)
+            .hasMessage("An authorized tenant service identity is required.");
+    }
+
     private int auditCount(String actorId, String action) {
         return database.queryForObject(
             "select count(*) from identity_audit_record where actor_id = ? and action = ?",

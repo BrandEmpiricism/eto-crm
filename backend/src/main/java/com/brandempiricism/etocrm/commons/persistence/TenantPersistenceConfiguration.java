@@ -1,7 +1,10 @@
 package com.brandempiricism.etocrm.commons.persistence;
 
 import javax.sql.DataSource;
+import com.brandempiricism.etocrm.commons.TenantDataSourceFactory;
 import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -9,7 +12,6 @@ import org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
-import org.springframework.context.annotation.DependsOn;
 import org.flywaydb.core.Flyway;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.orm.jpa.JpaTransactionManager;
@@ -38,16 +40,31 @@ public class TenantPersistenceConfiguration {
     }
 
     @Bean
-    @Primary
     @ConfigurationProperties("spring.datasource.hikari")
-    DataSource tenantDataSource() {
+    DataSource tenantBootstrapDataSource() {
         return tenantDataSourceProperties().initializeDataSourceBuilder()
             .type(HikariDataSource.class).build();
     }
 
+    @Bean(name = "tenantDataSource")
+    @Primary
+    @ConditionalOnProperty(name = "eto.tenancy.routing.enabled", havingValue = "false", matchIfMissing = true)
+    DataSource tenantDataSource(@Qualifier("tenantBootstrapDataSource") DataSource bootstrap) {
+        return bootstrap;
+    }
+
+    @Bean(name = "tenantDataSource")
+    @Primary
+    @ConditionalOnProperty(name = "eto.tenancy.routing.enabled", havingValue = "true")
+    DataSource routedTenantDataSource(TenantDataSourceFactory factory,
+            @Value("${eto.tenancy.routing.maximum-pools:20}") int maximumPools) {
+        return new TenantRoutingDataSource(factory, maximumPools);
+    }
+
     @Bean(initMethod = "migrate")
     @Primary
-    Flyway tenantFlyway(@Qualifier("tenantDataSource") DataSource dataSource) {
+    @ConditionalOnProperty(name = "eto.tenancy.routing.enabled", havingValue = "false", matchIfMissing = true)
+    Flyway tenantFlyway(@Qualifier("tenantBootstrapDataSource") DataSource dataSource) {
         return Flyway.configure().dataSource(dataSource)
             .locations("classpath:db/tenant")
             .load();
@@ -61,7 +78,6 @@ public class TenantPersistenceConfiguration {
 
     @Bean
     @Primary
-    @DependsOn("tenantFlyway")
     LocalContainerEntityManagerFactoryBean tenantEntityManagerFactory(
             EntityManagerFactoryBuilder builder,
             @Qualifier("tenantDataSource") DataSource dataSource) {

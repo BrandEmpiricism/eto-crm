@@ -14,6 +14,20 @@ spring:
         jwt:
           issuer-uri: ${OIDC_ISSUER_URI}
           audiences: ${OIDC_AUDIENCE}
+  jpa:
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        boot:
+          allow_jdbc_metadata_access: false
+        dialect: org.hibernate.dialect.PostgreSQLDialect
 eto:
   security:
     mode: oidc
+  tenancy:
+    routing:
+      enabled: true
+      database-server-url: ${TENANT_DATABASE_SERVER_URL}
+      maximum-pools: ${TENANT_DATABASE_MAXIMUM_POOLS:20}
+      maximum-connections-per-tenant: ${TENANT_DATABASE_MAXIMUM_CONNECTIONS:5}

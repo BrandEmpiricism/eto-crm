@@ -37,6 +37,19 @@ public class IdentityApplicationApi {
     @Transactional("platformTransactionManager")
     @PreAuthorize("isAuthenticated()")
     public TenantContext selectTenant(String actorId, UUID tenantId) {
+        return authorizedContext(actorId, tenantId, "tenant_membership.tenant_selected", "Active tenant selected");
+    }
+
+    @Transactional("platformTransactionManager")
+    public TenantContext selectTenantForService(String serviceId, UUID tenantId) {
+        requireActor(serviceId);
+        if (!serviceId.startsWith("service:") || serviceId.length() == "service:".length()) {
+            throw new TenantAccessDeniedException("An authorized tenant service identity is required.");
+        }
+        return authorizedContext(serviceId, tenantId, "tenant_job.context_authorized", "Tenant job context authorized");
+    }
+
+    private TenantContext authorizedContext(String actorId, UUID tenantId, String auditAction, String summary) {
         requireActor(actorId);
         var memberships = database.query(
             "select m.role, m.status from tenant_membership m join tenant_registry t on t.id = m.tenant_id where m.identity_id = ? and m.tenant_id = ? and t.status = 'ACTIVE'",
@@ -45,7 +58,7 @@ public class IdentityApplicationApi {
         if (memberships.isEmpty() || memberships.getFirst().status() != MembershipStatus.ACTIVE) {
             throw new TenantAccessDeniedException("An active company membership is required.");
         }
-        audit(actorId, tenantId, "tenant_membership.tenant_selected", actorId, "Active tenant selected");
+        audit(actorId, tenantId, auditAction, actorId, summary);
         return new TenantContext(actorId, tenantId, memberships.getFirst().role());
     }
 
