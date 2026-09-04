@@ -1,0 +1,18 @@
+spring:
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/eto_crm_r_hyper_tooling}
+    username: ${DATABASE_USERNAME:eto_crm_r_hyper_tooling}
+    password: ${DATABASE_PASSWORD:local-r-hyper-tooling-only}
+eto:
+  platform:
+    datasource:
+      url: ${PLATFORM_DATABASE_URL:jdbc:postgresql://localhost:5432/eto_crm_platform}
+      username: ${PLATFORM_DATABASE_USERNAME:eto_crm_platform}
+      password: ${PLATFORM_DATABASE_PASSWORD:local-platform-only}
+  tenancy:
+    initial-client:
+      database-password: ${DATABASE_PASSWORD:local-r-hyper-tooling-only}
+    provisioning:
+      admin-url: ${POSTGRES_ADMIN_URL:jdbc:postgresql://localhost:5432/postgres}
+      admin-username: ${POSTGRES_ADMIN_USERNAME:eto_crm_admin}
+      admin-password: ${POSTGRES_ADMIN_PASSWORD:local-admin-only}

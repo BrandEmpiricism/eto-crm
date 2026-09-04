@@ -22,6 +22,8 @@ Implement only the feature brief named by the task. The first slice is documente
 ## Working method
 
 1. Read the relevant product brief, acceptance examples, and ADRs before editing.
+   When changing backend behavior, persistence, integrations, security, or operations, also read `docs/architecture/logging-and-transaction-traceability.md`.
+   When changing tenant-aware behavior, provisioning, identity, data access, migrations, caching, jobs, audit, or events, also read `docs/architecture/adr/0002-database-per-client-tenant.md`.
 2. Inspect existing code and preserve unrelated changes.
 3. State assumptions when requirements leave meaningful ambiguity.
 4. Implement the smallest complete vertical slice.

@@ -1,6 +1,7 @@
 .idea/
 .vscode/
 *.iml
+build/
 backend/target/
 frontend/node_modules/
 frontend/dist/

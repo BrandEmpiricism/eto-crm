@@ -1,0 +1,9 @@
+logging:
+  structured:
+    format:
+      console: ecs
+    ecs:
+      service:
+        name: eto-crm
+        environment: production
+  structured.json.context.include: true

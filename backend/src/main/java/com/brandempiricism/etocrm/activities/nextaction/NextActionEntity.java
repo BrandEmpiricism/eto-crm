@@ -1,0 +1,4 @@
+package com.brandempiricism.etocrm.activities.nextaction;
+import jakarta.persistence.*;import java.time.Instant;import java.util.UUID;
+@Entity @Table(name="next_action")class NextActionEntity{@Id UUID id;UUID accountId;UUID capabilityMatchId;String description;Instant dueAt;@Enumerated(EnumType.STRING)ActionStatus status;Instant completedAt;Instant createdAt;String createdBy;Instant updatedAt;String updatedBy;protected NextActionEntity(){}NextActionEntity(UUID id,UUID accountId,UUID matchId,String description,Instant dueAt,Instant now,String actor){this.id=id;this.accountId=accountId;this.capabilityMatchId=matchId;this.description=description;this.dueAt=dueAt;this.status=ActionStatus.OPEN;this.createdAt=now;this.createdBy=actor;this.updatedAt=now;this.updatedBy=actor;}}
+enum ActionStatus{OPEN,COMPLETED}

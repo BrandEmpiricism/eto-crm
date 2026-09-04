@@ -1,6 +1,16 @@
 spring:
   application:
     name: eto-crm
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/eto_crm}
+    username: ${DATABASE_USERNAME:eto_crm}
+    password: ${DATABASE_PASSWORD:local-development-only}
+  flyway:
+    locations: classpath:db/tenant
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
   threads:
     virtual:
       enabled: true
@@ -16,4 +26,14 @@ management:
 server:
   error:
     include-message: never
+eto:
+  platform:
+    datasource:
+      url: ${PLATFORM_DATABASE_URL:jdbc:postgresql://localhost:5432/eto_crm_platform}
+      username: ${PLATFORM_DATABASE_USERNAME:eto_crm_platform}
+      password: ${PLATFORM_DATABASE_PASSWORD:local-development-only}
+  tenancy:
+    initial-client:
+      name: R Hyper Tooling
+      website: https://rhypertooling.ca/
 

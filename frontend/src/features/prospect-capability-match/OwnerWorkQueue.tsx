@@ -1,0 +1,2 @@
+import type { Match } from './prospectCapabilityMatchTypes'
+export function OwnerWorkQueue({owner,matches}:{owner:string;matches:Match[]}){return <section><p className="section-label">{owner||'Owner'} · active work queue</p>{matches.length===0?<p>No active matches requiring action.</p>:matches.map(item=><article key={item.id}><h3>{item.accountName}</h3><p>{item.capabilityName}</p><strong>{item.nextActionDate}</strong><p>{item.nextAction}</p></article>)}</section>}
