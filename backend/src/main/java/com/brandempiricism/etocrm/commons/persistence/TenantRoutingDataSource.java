@@ -1,5 +1,6 @@
 package com.brandempiricism.etocrm.commons.persistence;
 
+import com.brandempiricism.etocrm.commons.TenantDataSourceFactory;
 import com.brandempiricism.etocrm.identity.TenantContextHolder;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -70,10 +71,5 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
             catch (SQLException exception) { throw exception; }
             catch (Exception exception) { throw new SQLException("Could not close tenant database pool.", exception); }
         }
-    }
-
-    @FunctionalInterface
-    public interface TenantDataSourceFactory {
-        DataSource create(UUID tenantId) throws SQLException;
     }
 }
