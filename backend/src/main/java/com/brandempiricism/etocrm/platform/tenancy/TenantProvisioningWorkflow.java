@@ -5,6 +5,7 @@ import static com.brandempiricism.etocrm.platform.tenancy.ProvisioningStep.*;
 import java.time.Instant;
 import java.util.UUID;
 import com.brandempiricism.etocrm.commons.ServiceUnavailableException;
+import com.brandempiricism.etocrm.identity.IdentityApplicationApi;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -17,16 +18,16 @@ class TenantProvisioningWorkflow {
 
     private final TenantRegistryRepository tenants;
     private final TenantProvisioningInfrastructure infrastructure;
-    private final TenantAdministratorProvisioner administrators;
+    private final IdentityApplicationApi identities;
     private final TransactionTemplate transactions;
 
     TenantProvisioningWorkflow(TenantRegistryRepository tenants,
                                TenantProvisioningInfrastructure infrastructure,
-                               TenantAdministratorProvisioner administrators,
+                               IdentityApplicationApi identities,
                                @Qualifier("platformTransactionManager") org.springframework.transaction.PlatformTransactionManager transactionManager) {
         this.tenants = tenants;
         this.infrastructure = infrastructure;
-        this.administrators = administrators;
+        this.identities = identities;
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
@@ -52,7 +53,7 @@ class TenantProvisioningWorkflow {
                 tenant = advance(tenantId, VERIFIED, null, actorId);
             }
             if (tenant.provisioningStep == VERIFIED) {
-                administrators.assignInitialAdministrator(tenant.id, actorId);
+                identities.assignInitialAdministrator(tenant.id, actorId);
                 tenant = advance(tenantId, ADMIN_ASSIGNED, null, actorId);
             }
             if (tenant.provisioningStep == ADMIN_ASSIGNED) {

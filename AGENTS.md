@@ -21,15 +21,18 @@ Implement only the feature brief named by the task. The first slice is documente
 
 ## Working method
 
-1. Read the relevant product brief, acceptance examples, and ADRs before editing.
+1. Before writing any code, confirm that an Epic and a linked Story exist in the [ETO CRM GitHub project](https://github.com/users/BrandEmpiricism/projects/1). Create or link the missing ticket(s) when needed.
+2. Read the relevant product brief, Story acceptance criteria, acceptance examples, and ADRs before editing.
    When changing backend behavior, persistence, integrations, security, or operations, also read `docs/architecture/logging-and-transaction-traceability.md`.
    When changing tenant-aware behavior, provisioning, identity, data access, migrations, caching, jobs, audit, or events, also read `docs/architecture/adr/0002-database-per-client-tenant.md`.
-2. Inspect existing code and preserve unrelated changes.
-3. State assumptions when requirements leave meaningful ambiguity.
-4. Implement the smallest complete vertical slice.
-5. Add or update tests at the appropriate level.
-6. Run `./scripts/verify.sh` before reporting completion.
-7. Summarize behavior changed, verification evidence, and remaining risks.
+3. Clarify any ambiguous or incomplete acceptance criteria and update the Story before writing code. Do not substitute implementation assumptions for unclear acceptance criteria.
+4. Move the Story to the appropriate project status before starting work, keep its status current as work progresses, and leave it in the status that accurately reflects the outcome.
+5. Inspect existing code and preserve unrelated changes.
+6. Implement the smallest complete vertical slice.
+7. Add or update tests at the appropriate level.
+8. Run `./scripts/verify.sh` before reporting completion.
+9. When committing changes, add a comment to the Story with the commit identifier and a concise summary of the changes included in that commit.
+10. Summarize behavior changed, verification evidence, ticket status, and remaining risks.
 
 ## Quality rules
 
