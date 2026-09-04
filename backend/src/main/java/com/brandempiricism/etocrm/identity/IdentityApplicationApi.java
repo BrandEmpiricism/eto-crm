@@ -39,7 +39,7 @@ public class IdentityApplicationApi {
     public TenantContext selectTenant(String actorId, UUID tenantId) {
         requireActor(actorId);
         var memberships = database.query(
-            "select role, status from tenant_membership where identity_id = ? and tenant_id = ?",
+            "select m.role, m.status from tenant_membership m join tenant_registry t on t.id = m.tenant_id where m.identity_id = ? and m.tenant_id = ? and t.status = 'ACTIVE'",
             (result, row) -> new Membership(CompanyRole.valueOf(result.getString("role")),
                 MembershipStatus.valueOf(result.getString("status"))), actorId, tenantId);
         if (memberships.isEmpty() || memberships.getFirst().status() != MembershipStatus.ACTIVE) {

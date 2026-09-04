@@ -29,11 +29,13 @@ class TenantMembershipTest {
             new SimpleGrantedAuthority(Permissions.TENANT_ADMINISTER));
         SecurityContextHolder.getContext().setAuthentication(
             new UsernamePasswordAuthenticationToken("membership-admin", null, authorities));
+        database.update("update tenant_registry set status = 'ACTIVE' where id = ?", TENANT_ID);
     }
 
     @AfterEach
     void clearAuthentication() {
         SecurityContextHolder.clearContext();
+        database.update("update tenant_registry set status = 'PROVISIONING' where id = ?", TENANT_ID);
     }
 
     @Test
