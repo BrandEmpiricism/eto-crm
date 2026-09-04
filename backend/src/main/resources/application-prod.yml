@@ -7,3 +7,13 @@ logging:
         name: eto-crm
         environment: production
   structured.json.context.include: true
+spring:
+  security:
+    oauth2:
+      resourceserver:
+        jwt:
+          issuer-uri: ${OIDC_ISSUER_URI}
+          audiences: ${OIDC_AUDIENCE}
+eto:
+  security:
+    mode: oidc

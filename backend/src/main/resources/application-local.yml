@@ -4,6 +4,8 @@ spring:
     username: ${DATABASE_USERNAME:eto_crm_r_hyper_tooling}
     password: ${DATABASE_PASSWORD:local-r-hyper-tooling-only}
 eto:
+  security:
+    mode: actor-header
   platform:
     datasource:
       url: ${PLATFORM_DATABASE_URL:jdbc:postgresql://localhost:5432/eto_crm_platform}
