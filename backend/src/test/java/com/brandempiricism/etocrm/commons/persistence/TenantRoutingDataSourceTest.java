@@ -97,9 +97,12 @@ class TenantRoutingDataSourceTest {
         var creations = new java.util.concurrent.atomic.AtomicInteger();
         var router = new TenantRoutingDataSource(id -> creations.incrementAndGet() == 1 ? first : replacement,
             1, java.time.Duration.ofMinutes(5), clock);
-        bind(UUID.randomUUID());
+        var tenant = UUID.randomUUID();
+        bind(tenant);
         var lease = router.getConnection();
         when(clock.instant()).thenReturn(now.plusSeconds(301));
+        TenantContextHolder.clear();
+        bind(tenant);
         assertThatThrownBy(router::getConnection).hasMessage("Tenant credential refresh is awaiting active transactions.");
         verify(first, never()).close();
         lease.commit();
@@ -120,6 +123,30 @@ class TenantRoutingDataSourceTest {
         assertThatThrownBy(router::getConnection).hasMessage("Tenant database routing is closed.");
         lease.close();
         lease.close();
+        TenantContextHolder.clear();
+        verify(source).close();
+    }
+
+    @Test void executionKeepsItsDataSourceAcrossTransactionsAndCredentialExpiry() throws Exception {
+        var clock = mock(java.time.Clock.class);
+        var now = java.time.Instant.parse("2026-09-06T00:00:00Z");
+        when(clock.instant()).thenReturn(now);
+        var source = mock(CloseableDataSource.class);
+        when(source.getConnection()).thenReturn(mock(Connection.class));
+        var creations = new java.util.concurrent.atomic.AtomicInteger();
+        var router = new TenantRoutingDataSource(id -> { creations.incrementAndGet(); return source; },
+            1, java.time.Duration.ofMinutes(5), clock);
+        var tenant = UUID.randomUUID();
+        bind(tenant);
+        router.getConnection().close();
+        when(clock.instant()).thenReturn(now.plusSeconds(301));
+        router.getConnection().close();
+        assertThat(creations.get()).isEqualTo(1);
+        verify(source, never()).close();
+        TenantContextHolder.clear();
+        bind(tenant);
+        router.getConnection().close();
+        assertThat(creations.get()).isEqualTo(2);
         verify(source).close();
     }
 

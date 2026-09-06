@@ -24,7 +24,7 @@ class ProspectingWalkingSliceTest {
                 .contentType(MediaType.APPLICATION_JSON).content(completeRequest("11111111-1111-1111-1111-111111111111")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("ACTIVE"))
                 .andExpect(jsonPath("$.missingInformation").isEmpty());
-        mvc.perform(get("/api/prospecting/work-queue").param("owner", "Asha Patel"))
+        mvc.perform(authenticatedGet("/api/prospecting/work-queue").param("owner", "Asha Patel"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$[0].accountName").value("Northstar Assembly Systems"))
                 .andExpect(jsonPath("$[0].nextAction").value("Validate the changeover baseline"));
     }
@@ -83,5 +83,8 @@ class ProspectingWalkingSliceTest {
              "owner":"Asha Patel","hypothesis":"Fast-change fixtures can reduce line changeover time.",
              "nextAction":"Validate the changeover baseline","nextActionDate":"2026-09-10"}
             """.formatted(capabilityId);
+    }
+    private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder authenticatedGet(String uri, Object... variables) {
+        return org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get(uri, variables).header("X-Actor", "asha");
     }
 }

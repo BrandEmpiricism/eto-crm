@@ -22,6 +22,7 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
     private final Duration lifetime;
     private final Clock clock;
     private final Map<UUID, Pool> pools = new LinkedHashMap<>(16, .75f, true);
+    private final ThreadLocal<Pool> boundPool = new ThreadLocal<>();
     private boolean closed;
 
     public TenantRoutingDataSource(TenantDataSourceFactory factory, int maximumPools) {
@@ -45,19 +46,26 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
         Pool pool;
         synchronized (pools) {
             if (closed) throw new SQLException("Tenant database routing is closed.");
-            pool = pools.get(context.tenantId());
-            if (pool != null && !clock.instant().isBefore(pool.expiresAt)) {
-                if (pool.leases != 0) throw new SQLException("Tenant credential refresh is awaiting active transactions.");
-                pools.remove(context.tenantId());
-                closePool(pool);
-                pool = null;
-            }
+            pool = boundPool.get();
             if (pool == null) {
-                makeRoom();
-                var source = factory.create(context.tenantId());
-                if (source == null) throw new SQLException("Tenant database route is unavailable.");
-                pool = new Pool(source, clock.instant().plus(lifetime));
-                pools.put(context.tenantId(), pool);
+                pool = pools.get(context.tenantId());
+                if (pool != null && !clock.instant().isBefore(pool.expiresAt)) {
+                    if (pool.leases != 0 || pool.executions != 0) throw new SQLException("Tenant credential refresh is awaiting active transactions.");
+                    pools.remove(context.tenantId());
+                    closePool(pool);
+                    pool = null;
+                }
+                if (pool == null) {
+                    makeRoom();
+                    var source = factory.create(context.tenantId());
+                    if (source == null) throw new SQLException("Tenant database route is unavailable.");
+                    pool = new Pool(source, clock.instant().plus(lifetime));
+                    pools.put(context.tenantId(), pool);
+                }
+                pool.executions++;
+                boundPool.set(pool);
+                var selected = pool;
+                TenantContextHolder.onClear(() -> releaseExecution(selected));
             }
             pool.leases++;
         }
@@ -81,7 +89,7 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
         var iterator = pools.entrySet().iterator();
         while (iterator.hasNext()) {
             var candidate = iterator.next().getValue();
-            if (candidate.leases == 0) {
+            if (candidate.leases == 0 && candidate.executions == 0) {
                 iterator.remove();
                 closePool(candidate);
                 return;
@@ -116,7 +124,18 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
     private void release(Pool pool) throws SQLException {
         synchronized (pools) {
             pool.leases--;
-            if (closed && pool.leases == 0) closePool(pool);
+            if (closed && pool.leases == 0 && pool.executions == 0) closePool(pool);
+        }
+    }
+
+    private void releaseExecution(Pool pool) {
+        boundPool.remove();
+        synchronized (pools) {
+            pool.executions--;
+            if (closed && pool.leases == 0 && pool.executions == 0) {
+                try { closePool(pool); }
+                catch (SQLException failure) { throw new IllegalStateException("Could not close tenant database pool."); }
+            }
         }
     }
 
@@ -127,7 +146,7 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
             closed = true;
             SQLException failure = null;
             for (var pool : pools.values()) {
-                if (pool.leases == 0) {
+                if (pool.leases == 0 && pool.executions == 0) {
                     try { closePool(pool); } catch (SQLException exception) { failure = exception; }
                 }
             }
@@ -147,6 +166,7 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
         final DataSource source;
         final Instant expiresAt;
         int leases;
+        int executions;
         Pool(DataSource source, Instant expiresAt) { this.source = source; this.expiresAt = expiresAt; }
     }
 }

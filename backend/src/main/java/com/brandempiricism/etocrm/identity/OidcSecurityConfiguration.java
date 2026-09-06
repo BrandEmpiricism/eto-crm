@@ -115,7 +115,9 @@ class OidcSecurityConfiguration {
                 return;
             }
             try {
-                var tenantHeader = request.getHeader(TENANT_HEADER);
+                var tenantHeaders = java.util.Collections.list(request.getHeaders(TENANT_HEADER));
+                if (tenantHeaders.size() != 1) throw new IllegalArgumentException("Exactly one tenant is required.");
+                var tenantHeader = tenantHeaders.getFirst();
                 if (tenantHeader == null || tenantHeader.isBlank()) throw new IllegalArgumentException("Tenant is required.");
                 var tenantId = java.util.UUID.fromString(tenantHeader);
                 var context = identities.selectTenant(authentication.getName(), tenantId);

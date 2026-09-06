@@ -20,8 +20,13 @@ public class TenantDatabaseRoutingApi {
 
     @Transactional(transactionManager = "platformTransactionManager", readOnly = true)
     public TenantDatabaseRoute resolve(UUID tenantId) {
+        var authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !authentication.isAuthenticated()
+                || authentication instanceof org.springframework.security.authentication.AnonymousAuthenticationToken) {
+            throw new TenantAccessDeniedException(DENIED);
+        }
         var context = TenantContextHolder.current()
-            .filter(value -> value.tenantId().equals(tenantId))
+            .filter(value -> value.tenantId().equals(tenantId) && value.actorId().equals(authentication.getName()))
             .orElseThrow(() -> new TenantAccessDeniedException(DENIED));
         var routes = database.query(
             "select database_name, credential_secret_ref from tenant_registry "

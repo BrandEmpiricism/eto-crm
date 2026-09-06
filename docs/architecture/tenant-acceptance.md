@@ -53,6 +53,31 @@ behavior. Cryptographic validation is exercised separately by
 Passing this checkpoint does not establish production readiness or complete
 Epics #14 and #29.
 
+## Authorization completion checkpoint
+
+The follow-on work for #32 and #31 closes the application-boundary gaps identified
+above. All six CRM services enforce read/write permissions, execution identity,
+and authenticated write attribution. The boundary suite exercises 23 operations
+directly through Spring proxies. Platform provisioning also rejects forged
+operator attribution; membership privilege-change audit remains covered.
+
+Account, contact, capability, signal, match, queue, and next-action isolation are
+covered by PostgreSQL examples. Missing and wrong-account resources share a
+non-disclosing 404 response, and rejected cross-client mutations leave records
+unchanged. Duplicate tenant headers and missing/mismatched execution context
+fail closed. Support-only service credentials cannot acquire CRM permissions
+through membership selection.
+
+Pool selection is now pinned for the entire tenant execution, not merely one
+connection lease. Credential expiry cannot switch a running request/job to a
+different data source, and pinned pools cannot be evicted until context cleanup.
+This preserves the configured pool bound.
+
+These changes are ready for acceptance review for #31/#32 after verification.
+The boundary inventory and local-development exception are documented in
+`authorization.md`. Production secret-store/rotation work (#17/#18/#23), logging
+redaction (#28/#33), and browser hardening (#30) remain separate acceptance work.
+
 ## PostgreSQL acceptance command
 
 Use a disposable PostgreSQL 17 server. The suite creates randomly named platform and tenant databases and roles; the whole server is discarded afterward. Never point it at a shared development or production server.

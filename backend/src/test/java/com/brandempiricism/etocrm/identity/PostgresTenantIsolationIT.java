@@ -54,6 +54,7 @@ class PostgresTenantIsolationIT {
     private static final String TENANT_PASSWORD = UUID.randomUUID().toString();
 
     @Autowired MockMvc mvc;
+    @Autowired com.fasterxml.jackson.databind.ObjectMapper json;
     @Autowired @Qualifier("platformJdbcTemplate") JdbcTemplate platform;
     @Autowired IdentityApplicationApi identities;
     @Autowired TenantJobExecutor jobs;
@@ -210,6 +211,129 @@ class PostgresTenantIsolationIT {
         mvc.perform(get("/api/accounts").header("Authorization", "Bearer user-a")).andExpect(status().isForbidden());
         mvc.perform(get("/api/accounts").header("Authorization", "Bearer user-a").header("X-Tenant-Id", "jdbc:postgresql://caller/database"))
             .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void contactsSignalsMatchesAndActionsCannotBeReadOrChangedFromAnotherTenantOrAccount() throws Exception {
+        String root = "/api/accounts/" + SHARED_RECORD;
+        var contact = create(root + "/contacts", """
+            {"name":"Private contact","email":"private@example.test"}
+            """);
+        var signal = create(root + "/signals", """
+            {"source":"Permit","observedOn":"2026-09-01","observedFact":"An assembly line is approved."}
+            """);
+        var match = create(root + "/capability-matches", """
+            {"signalId":"%s","capabilityId":"11111111-1111-1111-1111-111111111111",
+             "owner":"user-a","hypothesis":"Fixtures reduce changeovers.","nextAction":"Validate","nextActionDate":"2026-10-01"}
+            """.formatted(signal));
+        var action = create(root + "/next-actions", """
+            {"capabilityMatchId":"%s","description":"Private follow-up","dueAt":"2099-10-01T00:00:00Z"}
+            """.formatted(match));
+        var otherAccount = create("/api/accounts", """
+            {"name":"Another account","industry":"Manufacturing","location":"Ontario"}
+            """);
+
+        for (String resource : List.of("contacts/" + contact, "signals/" + signal, "capability-matches/" + match)) {
+            mvc.perform(get(root + "/" + resource).header("Authorization", "Bearer user-a").header("X-Tenant-Id", A))
+                .andExpect(status().isOk());
+            notFound(get(root + "/" + resource), "user-b", B);
+            notFound(get("/api/accounts/" + otherAccount + "/" + resource), "user-a", A);
+            notFound(get(root + "/" + resource.substring(0, resource.indexOf('/')) + "/" + UUID.randomUUID()), "user-a", A);
+        }
+        for (var target : List.of(new Tenant(B, SHARED_RECORD.toString(), "user-b"), new Tenant(A, otherAccount, "user-a"))) {
+            String targetRoot = "/api/accounts/" + target.name();
+            notFound(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(targetRoot + "/contacts/" + contact)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"name\":\"Overwritten\",\"email\":\"bad@example.test\"}"), target.user(), target.id());
+            notFound(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(targetRoot + "/next-actions/" + action + "/complete"), target.user(), target.id());
+            notFound(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch(targetRoot + "/next-actions/" + action + "/reschedule")
+                .contentType(MediaType.APPLICATION_JSON).content("{\"dueAt\":\"2099-12-01T00:00:00Z\"}"), target.user(), target.id());
+            notFound(post(targetRoot + "/capability-matches").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"signalId\":\"" + signal + "\",\"capabilityId\":\"11111111-1111-1111-1111-111111111111\"}"), target.user(), target.id());
+            notFound(post(targetRoot + "/next-actions").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"capabilityMatchId\":\"" + match + "\",\"description\":\"Stolen match\",\"dueAt\":\"2099-12-01T00:00:00Z\"}"), target.user(), target.id());
+        }
+        var a = tenant(DATABASE_A);
+        assertThat(a.queryForObject("select name from account_contact where id=?", String.class, UUID.fromString(contact))).isEqualTo("Private contact");
+        assertThat(a.queryForObject("select completed_at from next_action where id=?", java.sql.Timestamp.class, UUID.fromString(action))).isNull();
+        assertThat(a.queryForObject("select due_at from next_action where id=?", java.sql.Timestamp.class, UUID.fromString(action)).toInstant())
+            .isEqualTo(Instant.parse("2099-10-01T00:00:00Z"));
+        for (var table : List.of("account_contact", "prospect_signal", "capability_match", "next_action")) {
+            assertThat(tenant(DATABASE_B).queryForObject("select count(*) from " + table, Integer.class)).isZero();
+        }
+    }
+
+    @Test
+    void duplicateTenantSelectionFailsClosed() throws Exception {
+        mvc.perform(get("/api/accounts").header("Authorization", "Bearer user-a").header("X-Tenant-Id", A, B))
+            .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void capabilityCatalogueAndOwnerQueueAreTenantScoped() throws Exception {
+        var capability = UUID.randomUUID();
+        tenant(DATABASE_A).update("insert into capability(id,name,description,active) values (?,?,?,true)",
+            capability, "Tenant A private capability", "Private catalogue entry");
+        var ownCatalogue = mvc.perform(get("/api/capabilities").header("Authorization", "Bearer user-a").header("X-Tenant-Id", A))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        var otherCatalogue = mvc.perform(get("/api/capabilities").header("Authorization", "Bearer user-b").header("X-Tenant-Id", B))
+            .andExpect(status().isOk()).andReturn().getResponse().getContentAsString();
+        assertThat(ownCatalogue).contains(capability.toString());
+        assertThat(otherCatalogue).doesNotContain(capability.toString(), "Tenant A private capability");
+        mvc.perform(get("/api/prospecting/work-queue").param("owner", "user-a")
+            .header("Authorization", "Bearer user-b").header("X-Tenant-Id", B))
+            .andExpect(status().isOk()).andExpect(jsonPath("$").isEmpty());
+    }
+
+    @Test
+    void applicationReadRequiresContextMatchingAuthenticatedIdentityBeforeOpeningDatabase() {
+        var security = org.springframework.security.core.context.SecurityContextHolder.getContext();
+        security.setAuthentication(new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("user-a", null,
+            List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(Permissions.CRM_READ))));
+        org.mockito.Mockito.clearInvocations(credentials);
+        try {
+            assertThatThrownBy(() -> accounts.getAccount(SHARED_RECORD)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            TenantContextHolder.bind(new IdentityApplicationApi.TenantContext("user-b", B, IdentityApplicationApi.CompanyRole.TENANT_ADMIN));
+            assertThatThrownBy(() -> accounts.getAccount(SHARED_RECORD)).isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            org.mockito.Mockito.verifyNoInteractions(credentials);
+        } finally {
+            TenantContextHolder.clear();
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+        }
+    }
+
+    @Test
+    void supportIdentityCannotUseMembershipToEscalateIntoCrmAccess() {
+        platform.update("insert into platform_identity(id,created_at) values ('service:support',current_timestamp)");
+        platform.update("insert into tenant_membership(identity_id,tenant_id,role,status,created_at,updated_at) "
+            + "values ('service:support',?,'BUSINESS_DEVELOPMENT','ACTIVE',current_timestamp,current_timestamp)", A);
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+            new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("service:support", null,
+                List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority(Permissions.SUPPORT_DIAGNOSE))));
+        try {
+            assertThatThrownBy(() -> jobs.run("service:support", A, () -> accounts.getAccount(SHARED_RECORD)))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+            assertThat(platform.queryForObject("select count(*) from identity_audit_record where actor_id='service:support' "
+                + "and tenant_id=? and action='tenant_job.context_authorized'", Integer.class, A)).isEqualTo(1);
+            assertThat(TenantContextHolder.current()).isEmpty();
+        } finally {
+            org.springframework.security.core.context.SecurityContextHolder.clearContext();
+            platform.update("delete from tenant_membership where identity_id='service:support'");
+            platform.update("delete from platform_identity where id='service:support'");
+        }
+    }
+
+    private String create(String path, String body) throws Exception {
+        var response = mvc.perform(post(path).header("Authorization", "Bearer user-a").header("X-Tenant-Id", A)
+            .contentType(MediaType.APPLICATION_JSON).content(body)).andExpect(status().isCreated()).andReturn().getResponse();
+        return json.readTree(response.getContentAsString()).get("id").asText();
+    }
+
+    private void notFound(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request, String user, UUID tenant) throws Exception {
+        mvc.perform(request.header("Authorization", "Bearer " + user).header("X-Tenant-Id", tenant).header("X-Request-Id", "ownership-check"))
+            .andExpect(status().isNotFound())
+            .andExpect(jsonPath("$.title").value("Resource not found"))
+            .andExpect(jsonPath("$.detail").value("The requested resource was not found."))
+            .andExpect(jsonPath("$.requestId").value("ownership-check"));
     }
 
     private static JdbcTemplate tenant(String name) {

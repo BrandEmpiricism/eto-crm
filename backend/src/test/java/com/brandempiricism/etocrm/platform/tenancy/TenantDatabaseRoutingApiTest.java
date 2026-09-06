@@ -24,7 +24,10 @@ class TenantDatabaseRoutingApiTest {
     private final JdbcTemplate database = mock(JdbcTemplate.class);
     private final TenantDatabaseRoutingApi routing = new TenantDatabaseRoutingApi(database);
 
-    @AfterEach void clearContext() { TenantContextHolder.clear(); }
+    @AfterEach void clearContext() {
+        TenantContextHolder.clear();
+        org.springframework.security.core.context.SecurityContextHolder.clearContext();
+    }
 
     @Test void resolvesOnlyTheRouteMatchingTheVerifiedContext() throws Exception {
         var tenantId = UUID.randomUUID();
@@ -59,6 +62,8 @@ class TenantDatabaseRoutingApiTest {
     }
 
     private static void bind(UUID tenantId) {
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
+            new org.springframework.security.authentication.UsernamePasswordAuthenticationToken("actor", null, List.of()));
         TenantContextHolder.bind(new IdentityApplicationApi.TenantContext(
             "actor", tenantId, IdentityApplicationApi.CompanyRole.BUSINESS_DEVELOPMENT));
     }
