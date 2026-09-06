@@ -57,8 +57,9 @@ public class TenantPersistenceConfiguration {
     @Primary
     @ConditionalOnProperty(name = "eto.tenancy.routing.enabled", havingValue = "true")
     DataSource routedTenantDataSource(TenantDataSourceFactory factory,
-            @Value("${eto.tenancy.routing.maximum-pools:20}") int maximumPools) {
-        return new TenantRoutingDataSource(factory, maximumPools);
+            @Value("${eto.tenancy.routing.maximum-pools:20}") int maximumPools,
+            @Value("${eto.tenancy.routing.credential-cache-seconds:300}") long cacheSeconds) {
+        return new TenantRoutingDataSource(factory, maximumPools, java.time.Duration.ofSeconds(cacheSeconds), java.time.Clock.systemUTC());
     }
 
     @Bean(initMethod = "migrate")

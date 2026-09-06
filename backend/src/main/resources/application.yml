@@ -1,4 +1,7 @@
 spring:
+  sql:
+    init:
+      mode: never
   application:
     name: eto-crm
   datasource:
@@ -27,6 +30,8 @@ server:
   error:
     include-message: never
 eto:
+  security:
+    mode: oidc
   platform:
     datasource:
       url: ${PLATFORM_DATABASE_URL:jdbc:postgresql://localhost:5432/eto_crm_platform}

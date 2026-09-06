@@ -8,6 +8,23 @@ permissions:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: acceptance
+          POSTGRES_PASSWORD: acceptance-local-only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U acceptance"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_POSTGRES_URL: jdbc:postgresql://localhost:5432/postgres
+      TEST_POSTGRES_USERNAME: acceptance
+      TEST_POSTGRES_PASSWORD: acceptance-local-only
     defaults:
       run:
         working-directory: backend
@@ -18,7 +35,7 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
-      - run: mvn --batch-mode verify
+      - run: mvn --batch-mode -Ppostgres-acceptance verify
   frontend:
     runs-on: ubuntu-latest
     defaults:

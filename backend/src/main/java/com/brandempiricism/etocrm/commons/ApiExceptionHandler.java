@@ -9,6 +9,24 @@ import org.slf4j.MDC;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler({com.brandempiricism.etocrm.identity.TenantAccessDeniedException.class,
+        org.springframework.security.access.AccessDeniedException.class})
+    ProblemDetail accessDenied(RuntimeException exception) {
+        var detail = ProblemDetail.forStatusAndDetail(HttpStatus.FORBIDDEN, "The requested operation is not permitted.");
+        detail.setTitle("Access denied");
+        detail.setProperty("requestId", MDC.get("requestId"));
+        return detail;
+    }
+
+    @ExceptionHandler({org.springframework.transaction.CannotCreateTransactionException.class,
+        org.springframework.dao.DataAccessResourceFailureException.class})
+    ProblemDetail databaseUnavailable(RuntimeException exception) {
+        var detail = ProblemDetail.forStatusAndDetail(HttpStatus.SERVICE_UNAVAILABLE, "The requested service is temporarily unavailable.");
+        detail.setTitle("Service unavailable");
+        detail.setProperty("requestId", MDC.get("requestId"));
+        return detail;
+    }
+
     @ExceptionHandler(IllegalArgumentException.class)
     ProblemDetail validation(IllegalArgumentException exception) {
         var detail = ProblemDetail.forStatusAndDetail(HttpStatus.UNPROCESSABLE_ENTITY, exception.getMessage());

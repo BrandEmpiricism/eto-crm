@@ -73,4 +73,4 @@ The Compose initialization script creates separate least-privilege development r
 
 ## Verification database
 
-Run `./scripts/verify.sh` for the backend and frontend checks. Backend tests use isolated in-memory H2 platform and tenant databases in PostgreSQL compatibility mode, configured in `backend/src/test/resources/application.yml`. CI runs the same Maven verification against those databases and does not connect to a shared PostgreSQL instance. H2 checks do not replace a local PostgreSQL startup check for PostgreSQL-specific behavior.
+Run `./scripts/verify.sh` for the backend and frontend checks. Backend tests use isolated in-memory H2 platform and tenant databases in PostgreSQL compatibility mode, configured in `backend/src/test/resources/application.yml`. CI additionally runs `mvn --batch-mode -Ppostgres-acceptance verify` against a fresh PostgreSQL 17 service, including separate platform and tenant databases. Neither suite uses a shared database. See [tenant acceptance](docs/architecture/tenant-acceptance.md) for the disposable PostgreSQL command and acceptance evidence.
