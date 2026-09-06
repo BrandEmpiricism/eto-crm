@@ -51,7 +51,25 @@ class ApplicationAuthorizationTest {
         var command = new AccountApplicationApi.CreateAccount(
             "Authorized Tools", "Manufacturing", "Ontario", null, null, null, List.of());
 
-        assertThat(accounts.createAccount(command, "bd-user").name()).isEqualTo("Authorized Tools");
+        assertThat(accounts.createAccount(command, "test-user").name()).isEqualTo("Authorized Tools");
+    }
+
+    @Test
+    void businessDevelopmentCannotAttributeAWriteToAnotherActor() {
+        authenticate(SecurityRole.BUSINESS_DEVELOPMENT);
+        var command = new AccountApplicationApi.CreateAccount(
+            "Forged attribution", "Manufacturing", "Ontario", null, null, null, List.of());
+        assertThatThrownBy(() -> accounts.createAccount(command, "another-user"))
+            .isInstanceOf(AccessDeniedException.class);
+    }
+
+    @Test
+    void supportAndPlatformRolesCannotReadCrmThroughApplicationApi() {
+        for (var role : List.of(SecurityRole.SUPPORT, SecurityRole.PLATFORM_OPERATOR)) {
+            authenticate(role);
+            assertThatThrownBy(() -> accounts.getAccount(java.util.UUID.randomUUID()))
+                .isInstanceOf(AccessDeniedException.class);
+        }
     }
 
     private static void authenticate(SecurityRole role) {

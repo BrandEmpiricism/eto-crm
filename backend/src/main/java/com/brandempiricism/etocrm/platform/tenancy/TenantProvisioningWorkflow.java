@@ -32,7 +32,7 @@ class TenantProvisioningWorkflow {
         this.transactions = new TransactionTemplate(transactionManager);
     }
 
-    @PreAuthorize("hasAuthority('platform:operate')")
+    @PreAuthorize("hasAuthority('platform:operate') and #actorId == authentication.name")
     TenantProvisioningService.TenantView provision(UUID tenantId, String actorId) {
         try {
             var tenant = load(tenantId);

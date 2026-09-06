@@ -9,6 +9,14 @@ import org.slf4j.MDC;
 
 @RestControllerAdvice
 public class ApiExceptionHandler {
+    @ExceptionHandler(ResourceNotFoundException.class)
+    ProblemDetail resourceNotFound(ResourceNotFoundException exception) {
+        var detail = ProblemDetail.forStatusAndDetail(HttpStatus.NOT_FOUND, exception.getMessage());
+        detail.setTitle("Resource not found");
+        detail.setProperty("requestId", MDC.get("requestId"));
+        return detail;
+    }
+
     @ExceptionHandler({com.brandempiricism.etocrm.identity.TenantAccessDeniedException.class,
         org.springframework.security.access.AccessDeniedException.class})
     ProblemDetail accessDenied(RuntimeException exception) {
