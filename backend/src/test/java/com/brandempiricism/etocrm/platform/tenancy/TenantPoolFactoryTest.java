@@ -20,7 +20,8 @@ class TenantPoolFactoryTest {
             tenantId, "eto_crm_acme", "vault://tenants/acme"));
         when(secrets.resolve("vault://tenants/acme"))
             .thenReturn(new TenantDatabaseCredentialProvider.Credentials("acme_role", "not-logged"));
-        var factory = new TenantPoolFactory(routing, secrets, "jdbc:postgresql://db.internal:5432/postgres?sslmode=require", 4);
+        var factory = new TenantPoolFactory(routing, secrets, "jdbc:postgresql://db.internal:5432/postgres?sslmode=require", 4,
+            source -> {}); // Schema validation is exercised against PostgreSQL by PostgresTenantIsolationIT.
 
         try (var pool = (HikariDataSource) factory.create(tenantId)) {
             assertThat(pool.getJdbcUrl()).isEqualTo("jdbc:postgresql://db.internal:5432/eto_crm_acme?sslmode=require");

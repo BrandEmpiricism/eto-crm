@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
 
 import com.brandempiricism.etocrm.identity.IdentityApplicationApi;
 import com.brandempiricism.etocrm.identity.TenantContextHolder;
@@ -36,10 +37,12 @@ class TenantRoutingDataSourceTest {
         var router = new TenantRoutingDataSource(pools::get, 2);
 
         bind(firstTenant);
-        assertThat(router.getConnection()).isSameAs(firstConnection);
+        try (var connection = router.getConnection()) { connection.commit(); }
+        verify(firstConnection).commit();
         TenantContextHolder.clear();
         bind(secondTenant);
-        assertThat(router.getConnection()).isSameAs(secondConnection);
+        try (var connection = router.getConnection()) { connection.commit(); }
+        verify(secondConnection).commit();
     }
 
     @Test void leastRecentlyUsedPoolIsClosedWhenBoundIsExceeded() throws Exception {
@@ -47,13 +50,15 @@ class TenantRoutingDataSourceTest {
         var secondTenant = UUID.randomUUID();
         var firstPool = mock(CloseableDataSource.class);
         var secondPool = mock(CloseableDataSource.class);
+        when(firstPool.getConnection()).thenReturn(mock(Connection.class));
+        when(secondPool.getConnection()).thenReturn(mock(Connection.class));
         var router = new TenantRoutingDataSource(id -> id.equals(firstTenant) ? firstPool : secondPool, 1);
 
         bind(firstTenant);
-        router.getConnection();
+        router.getConnection().close();
         TenantContextHolder.clear();
         bind(secondTenant);
-        router.getConnection();
+        router.getConnection().close();
         verify(firstPool).close();
     }
 
@@ -61,6 +66,61 @@ class TenantRoutingDataSourceTest {
         var router = new TenantRoutingDataSource(tenant -> mock(DataSource.class), 1);
         assertThatThrownBy(() -> router.getConnection("caller", "secret"))
             .hasMessage("Caller-supplied tenant database credentials are not permitted.");
+    }
+
+    @Test void busyPoolCannotBeEvictedAndCapacityReturnsWhenTransactionFinishes() throws Exception {
+        var first = UUID.randomUUID();
+        var second = UUID.randomUUID();
+        var source = mock(CloseableDataSource.class);
+        when(source.getConnection()).thenReturn(mock(Connection.class));
+        var router = new TenantRoutingDataSource(id -> source, 1);
+        bind(first);
+        var lease = router.getConnection();
+        TenantContextHolder.clear();
+        bind(second);
+        assertThatThrownBy(router::getConnection).hasMessage("Tenant pool capacity is occupied by active transactions.");
+        verify(source, never()).close();
+        lease.commit();
+        lease.close();
+        router.getConnection().close();
+        verify(source).close();
+    }
+
+    @Test void expiredCredentialsRefreshOnlyAfterExistingTransactionFinishes() throws Exception {
+        var clock = mock(java.time.Clock.class);
+        var now = java.time.Instant.parse("2026-09-05T00:00:00Z");
+        when(clock.instant()).thenReturn(now);
+        var first = mock(CloseableDataSource.class);
+        var replacement = mock(CloseableDataSource.class);
+        when(first.getConnection()).thenReturn(mock(Connection.class));
+        when(replacement.getConnection()).thenReturn(mock(Connection.class));
+        var creations = new java.util.concurrent.atomic.AtomicInteger();
+        var router = new TenantRoutingDataSource(id -> creations.incrementAndGet() == 1 ? first : replacement,
+            1, java.time.Duration.ofMinutes(5), clock);
+        bind(UUID.randomUUID());
+        var lease = router.getConnection();
+        when(clock.instant()).thenReturn(now.plusSeconds(301));
+        assertThatThrownBy(router::getConnection).hasMessage("Tenant credential refresh is awaiting active transactions.");
+        verify(first, never()).close();
+        lease.commit();
+        lease.close();
+        router.getConnection().close();
+        assertThat(creations.get()).isEqualTo(2);
+        verify(first).close();
+    }
+
+    @Test void shutdownDrainsLeasedConnectionsAndCannotReopenPools() throws Exception {
+        var source = mock(CloseableDataSource.class);
+        when(source.getConnection()).thenReturn(mock(Connection.class));
+        var router = new TenantRoutingDataSource(id -> source, 1);
+        bind(UUID.randomUUID());
+        var lease = router.getConnection();
+        router.close();
+        verify(source, never()).close();
+        assertThatThrownBy(router::getConnection).hasMessage("Tenant database routing is closed.");
+        lease.close();
+        lease.close();
+        verify(source).close();
     }
 
     private static DataSource pool(Connection connection) throws Exception {

@@ -6,6 +6,9 @@ import com.zaxxer.hikari.HikariDataSource;
 import java.util.UUID;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
+import java.util.function.Consumer;
+import org.flywaydb.core.Flyway;
+import com.brandempiricism.etocrm.commons.ServiceUnavailableException;
 
 /** Builds tenant pools exclusively from an authorized registry route and server-side secret provider. */
 public final class TenantPoolFactory implements TenantDataSourceFactory {
@@ -14,14 +17,21 @@ public final class TenantPoolFactory implements TenantDataSourceFactory {
     private final TenantDatabaseCredentialProvider credentials;
     private final String databaseServerUrl;
     private final int maximumPoolSize;
+    private final Consumer<DataSource> schemaVerifier;
 
     public TenantPoolFactory(TenantDatabaseRoutingApi routing, TenantDatabaseCredentialProvider credentials,
             String databaseServerUrl, int maximumPoolSize) {
+        this(routing, credentials, databaseServerUrl, maximumPoolSize, TenantPoolFactory::verifySchema);
+    }
+
+    TenantPoolFactory(TenantDatabaseRoutingApi routing, TenantDatabaseCredentialProvider credentials,
+            String databaseServerUrl, int maximumPoolSize, Consumer<DataSource> schemaVerifier) {
         if (maximumPoolSize < 1) throw new IllegalArgumentException("Tenant pool size must be positive.");
         this.routing = routing;
         this.credentials = credentials;
         this.databaseServerUrl = databaseServerUrl;
         this.maximumPoolSize = maximumPoolSize;
+        this.schemaVerifier = schemaVerifier;
     }
 
     @Override
@@ -36,7 +46,22 @@ public final class TenantPoolFactory implements TenantDataSourceFactory {
         configuration.setMinimumIdle(0);
         configuration.setInitializationFailTimeout(-1);
         configuration.setPoolName("tenant-" + tenantId);
-        return new HikariDataSource(configuration);
+        var pool = new HikariDataSource(configuration);
+        try {
+            schemaVerifier.accept(pool);
+            return pool;
+        } catch (RuntimeException failure) {
+            pool.close();
+            throw new ServiceUnavailableException("Tenant database readiness or schema compatibility verification failed.");
+        }
+    }
+
+    private static void verifySchema(DataSource source) {
+        var flyway = Flyway.configure().dataSource(source).locations("classpath:db/tenant")
+            .ignoreMigrationPatterns(new String[0]).load();
+        if (!flyway.validateWithResult().validationSuccessful || flyway.info().pending().length != 0) {
+            throw new ServiceUnavailableException("Tenant schema is incompatible.");
+        }
     }
 
     static String databaseUrl(String serverUrl, String databaseName) {

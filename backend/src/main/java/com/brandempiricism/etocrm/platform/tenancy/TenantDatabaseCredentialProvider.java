@@ -10,5 +10,6 @@ public interface TenantDatabaseCredentialProvider {
                 throw new IllegalArgumentException("Complete tenant database credentials are required.");
             }
         }
+        @Override public String toString() { return "Tenant database credentials [redacted]"; }
     }
 }
