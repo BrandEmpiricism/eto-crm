@@ -56,10 +56,10 @@ public class TenantPersistenceConfiguration {
     @Bean(name = "tenantDataSource")
     @Primary
     @ConditionalOnProperty(name = "eto.tenancy.routing.enabled", havingValue = "true")
-    DataSource routedTenantDataSource(TenantDataSourceFactory factory,
+    DataSource routedTenantDataSource(TenantDataSourceFactory factory, com.brandempiricism.etocrm.commons.TenantExecutionContext execution,
             @Value("${eto.tenancy.routing.maximum-pools:20}") int maximumPools,
             @Value("${eto.tenancy.routing.credential-cache-seconds:300}") long cacheSeconds) {
-        return new TenantRoutingDataSource(factory, maximumPools, java.time.Duration.ofSeconds(cacheSeconds), java.time.Clock.systemUTC());
+        return new TenantRoutingDataSource(execution, factory, maximumPools, java.time.Duration.ofSeconds(cacheSeconds), java.time.Clock.systemUTC());
     }
 
     @Bean(initMethod = "migrate")

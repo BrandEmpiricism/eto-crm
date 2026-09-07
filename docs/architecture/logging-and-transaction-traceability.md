@@ -87,3 +87,69 @@ For each state-changing feature, verify:
 - trace propagation across module or external boundaries
 - tests for failure outcomes and audit/telemetry behavior
 
+## Implemented diagnostic contract (#28 / #33)
+
+`logback-spring.xml` routes application and framework logging through
+`SafeLogEncoder`. Deployed profiles write newline-delimited JSON to stdout;
+`local` and `test` prepend a readable timestamp, level, and event name to the
+same sanitized record. Collect stdout through the deployment's log collector.
+There is deliberately no separate unsanitized file appender.
+
+The encoder is an allowlist, not a best-effort password regular expression:
+
+- Application event names come from `DiagnosticEvents.Event`; outcomes are
+  `success`, `rejected`, or `failure`. Unclassified framework records use
+  `framework.diagnostic` and `unknown`.
+- Allowed fields are UTC timestamp, level, service, event, duration, HTTP status,
+  aggregate UUID, and validated correlation identifiers.
+- Arbitrary messages, arguments, key/value pairs, extra MDC fields, exception
+  messages, suppressed-exception text, and stack-file paths are omitted.
+  Exception types and bounded class/method/line frames retain failure location
+  and cause-chain evidence without customer content.
+- `databaseRouteId` is derived from the verified tenant UUID (`tenant:<uuid>`),
+  never from a database name, secret reference, URL, or hostname.
+- Verified opaque subjects are emitted as `actorId`. Subjects outside the
+  restricted identifier alphabet, including email addresses, are represented
+  by a stable `sha256:` pseudonym. This does not change authentication or audit
+  attribution, which continue to use the verified subject.
+
+Spring's `logging.level.*` settings remain configurable. DEBUG/TRACE cannot
+restore omitted payloads. Free-form framework diagnostics are intentionally
+less detailed; add a reviewed, fixed application event when more operational
+meaning is needed instead of enabling raw output. Changes to logging appenders
+or `logging.config` require a security review of this boundary. No new logging
+dependency is introduced.
+
+HTTP requests accept a single `X-Request-Id` and `X-Business-Transaction-Id`
+containing 1-100 letters, digits, dots, underscores, or hyphens. Missing,
+duplicated, or invalid IDs are replaced; absent business IDs default to the
+request ID. Both IDs are returned as headers. Problem Details include the
+request ID, including authentication, membership-storage, routing, malformed
+input, and unexpected application failures.
+
+The current trace-context reader accepts W3C version `00` traceparent with
+nonzero trace/span IDs, preserves flags and the upstream parent, and creates a
+fresh child span ID. Invalid context starts a new unsampled trace. The child
+traceparent is returned in the response and is available through
+`DiagnosticContext.capture()` for handoff. This is correlation propagation,
+not an OpenTelemetry span exporter; tracing instrumentation belongs to #26.
+
+`TenantJobExecutor.run(service, tenant, correlation, work)` is the explicit
+worker entry point. Capture correlation before enqueueing, but establish the
+service's authenticated security context on the worker independently. Each
+execution rechecks service membership; the correlation snapshot carries no
+identity, tenant authorization, or credentials. Scoped MDC is restored after
+success/failure. Scheduled-executor and concurrent-tenant tests exercise this
+entry point; there is no production scheduler or outbox dispatcher yet.
+
+Provisioning establishes a scoped tenant context for diagnostics after the
+authorized registry lookup. Migration outcomes carry request, workflow, actor,
+tenant, trace, and child-span context through failure and retry. Committed
+account, signal, capability-match, and provisioning transitions use transaction
+callbacks so a rollback cannot emit a successful state-change event. These
+records are diagnostic only, not an audit replacement or replay mechanism.
+
+Story #28 remains open by product decision until #25 provides the outbox
+dispatcher and its tenant/correlation propagation tests. This batch does not
+introduce an outbox, fleet migration scheduler, production secret store, or
+durable audit expansion.

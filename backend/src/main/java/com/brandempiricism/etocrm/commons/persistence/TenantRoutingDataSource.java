@@ -1,7 +1,7 @@
 package com.brandempiricism.etocrm.commons.persistence;
 
 import com.brandempiricism.etocrm.commons.TenantDataSourceFactory;
-import com.brandempiricism.etocrm.identity.TenantContextHolder;
+import com.brandempiricism.etocrm.commons.TenantExecutionContext;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.sql.Connection;
@@ -18,6 +18,7 @@ import org.springframework.jdbc.datasource.AbstractDataSource;
 /** Bounded tenant pools that preserve leased connections until their transactions finish. */
 public final class TenantRoutingDataSource extends AbstractDataSource implements AutoCloseable {
     private final TenantDataSourceFactory factory;
+    private final TenantExecutionContext execution;
     private final int maximumPools;
     private final Duration lifetime;
     private final Clock clock;
@@ -25,15 +26,16 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
     private final ThreadLocal<Pool> boundPool = new ThreadLocal<>();
     private boolean closed;
 
-    public TenantRoutingDataSource(TenantDataSourceFactory factory, int maximumPools) {
-        this(factory, maximumPools, Duration.ofMinutes(5), Clock.systemUTC());
+    public TenantRoutingDataSource(TenantExecutionContext execution, TenantDataSourceFactory factory, int maximumPools) {
+        this(execution, factory, maximumPools, Duration.ofMinutes(5), Clock.systemUTC());
     }
 
-    public TenantRoutingDataSource(TenantDataSourceFactory factory, int maximumPools, Duration lifetime, Clock clock) {
+    public TenantRoutingDataSource(TenantExecutionContext execution, TenantDataSourceFactory factory, int maximumPools, Duration lifetime, Clock clock) {
         if (maximumPools < 1 || lifetime.isZero() || lifetime.isNegative()) {
             throw new IllegalArgumentException("Tenant pool limits must be positive.");
         }
         this.factory = factory;
+        this.execution = execution;
         this.maximumPools = maximumPools;
         this.lifetime = lifetime;
         this.clock = clock;
@@ -41,31 +43,31 @@ public final class TenantRoutingDataSource extends AbstractDataSource implements
 
     @Override
     public Connection getConnection() throws SQLException {
-        var context = TenantContextHolder.current()
+        var tenantId = execution.currentTenantId()
             .orElseThrow(() -> new SQLException("Verified tenant context is required."));
         Pool pool;
         synchronized (pools) {
             if (closed) throw new SQLException("Tenant database routing is closed.");
             pool = boundPool.get();
             if (pool == null) {
-                pool = pools.get(context.tenantId());
+                pool = pools.get(tenantId);
                 if (pool != null && !clock.instant().isBefore(pool.expiresAt)) {
                     if (pool.leases != 0 || pool.executions != 0) throw new SQLException("Tenant credential refresh is awaiting active transactions.");
-                    pools.remove(context.tenantId());
+                    pools.remove(tenantId);
                     closePool(pool);
                     pool = null;
                 }
                 if (pool == null) {
                     makeRoom();
-                    var source = factory.create(context.tenantId());
+                    var source = factory.create(tenantId);
                     if (source == null) throw new SQLException("Tenant database route is unavailable.");
                     pool = new Pool(source, clock.instant().plus(lifetime));
-                    pools.put(context.tenantId(), pool);
+                    pools.put(tenantId, pool);
                 }
                 pool.executions++;
                 boundPool.set(pool);
                 var selected = pool;
-                TenantContextHolder.onClear(() -> releaseExecution(selected));
+                execution.onClear(() -> releaseExecution(selected));
             }
             pool.leases++;
         }

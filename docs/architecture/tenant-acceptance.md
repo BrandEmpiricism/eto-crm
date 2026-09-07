@@ -78,6 +78,43 @@ The boundary inventory and local-development exception are documented in
 `authorization.md`. Production secret-store/rotation work (#17/#18/#23), logging
 redaction (#28/#33), and browser hardening (#30) remain separate acceptance work.
 
+## OIDC and logging acceptance checkpoint
+
+The #28/#33 follow-on adds an allowlisted output encoder shared by application
+and framework logs. Tests exercise header/body/claim/credential canaries,
+exception causes, and configurable DEBUG/TRACE levels. Real RSA-signed tokens
+now pass through the HTTP resource-server path with the production validator:
+untrusted signature, issuer, audience, missing expiry/subject, and expired
+tokens receive safe correlated 401 responses. A signed subject, not `X-Actor`,
+owns accepted writes; token tenant/database claims and malformed optional roles
+cannot override the active platform membership.
+
+Membership-storage outages produce a correlated 503 before tenant application
+access. PostgreSQL acceptance covers a secret-provider failure after verified
+membership, with logical route identity and no host/credential disclosure, and
+checks log separation for simultaneous requests to different tenants. Existing
+production/local profile guards and membership/permission coverage still apply.
+The issuer discovery/JWK transport is not a live-provider deployment test.
+
+Scheduled-executor tests cover correlation handoff, membership revalidation,
+concurrent tenants, and worker cleanup; migration tests cover failure/retry.
+Prospecting tests verify committed cross-module events share a workflow ID and
+rolled-back work emits no successful state-change event. See
+`logging-and-transaction-traceability.md` for the output contract and limitations.
+
+This completes the remaining implementation/evidence for #33, subject to the
+full verification gate and integration review. #28 remains open until #25
+implements the dispatcher and outbox propagation tests, as explicitly confirmed
+by the product owner. This is not production-readiness acceptance for #17,
+#18, #23, #26, or #30.
+
+Verification on 2026-09-07: `./scripts/verify.sh` with
+`MAVEN_ARGS=-Ppostgres-acceptance` passed 135 backend tests, 15 PostgreSQL 17
+integration tests, frontend lint, one frontend test, and the TypeScript/Vite
+build. No tests were skipped. The routing-failure fixture removes its temporary
+membership and audit records so subsequent membership-count examples remain
+independent.
+
 ## PostgreSQL acceptance command
 
 Use a disposable PostgreSQL 17 server. The suite creates randomly named platform and tenant databases and roles; the whole server is discarded afterward. Never point it at a shared development or production server.
