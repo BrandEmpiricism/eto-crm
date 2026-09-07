@@ -26,6 +26,10 @@ public class TenantAuthorization {
         return permitted(authentication, Permissions.CRM_WRITE) && authentication.getName().equals(actor);
     }
 
+    public boolean canWriteAs(String actor) {
+        return canWrite(org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication(), actor);
+    }
+
     private boolean permitted(Authentication authentication, String permission) {
         if (authentication == null || !authentication.isAuthenticated()
                 || authentication instanceof AnonymousAuthenticationToken

@@ -1,6 +1,8 @@
 package com.brandempiricism.etocrm.accounts.account;
 
 import com.brandempiricism.etocrm.accounts.AccountApplicationApi;
+import com.brandempiricism.etocrm.events.BusinessEvent;
+import com.brandempiricism.etocrm.events.BusinessEventPublisher;
 import com.brandempiricism.etocrm.accounts.contact.ContactService;
 import java.net.URI;
 import java.time.Instant;
@@ -13,11 +15,11 @@ import org.springframework.security.access.prepost.PreAuthorize;
 @org.springframework.security.access.prepost.PreAuthorize("@tenantAuthorization.canRead(authentication)")
 @Service
 public class AccountService implements AccountApplicationApi {
-    private final AccountRepository accounts; private final ContactService contacts;
-    AccountService(AccountRepository accounts,ContactService contacts){this.accounts=accounts;this.contacts=contacts;}
-    @Override @Transactional @PreAuthorize("@tenantAuthorization.canWrite(authentication, #actor)") public AccountRef createAccount(CreateAccount command,String actor){
+    private final AccountRepository accounts; private final ContactService contacts; private final BusinessEventPublisher events;
+    AccountService(AccountRepository accounts,ContactService contacts,BusinessEventPublisher events){this.accounts=accounts;this.contacts=contacts;this.events=events;}
+    @Override @Transactional("tenantTransactionManager") @PreAuthorize("@tenantAuthorization.canWrite(authentication, #actor)") public AccountRef createAccount(CreateAccount command,String actor){
         var now=Instant.now();var entity=new AccountEntity(UUID.randomUUID(),required(command.name()),required(command.industry()),required(command.location()),website(command.website()),clean(command.owner()),clean(command.summary()),now,actor);
-        accounts.save(entity);com.brandempiricism.etocrm.commons.DiagnosticEvents.afterCommit(com.brandempiricism.etocrm.commons.DiagnosticEvents.Event.ACCOUNT_CREATED,entity.id);for(var contact:safe(command.contacts()))contacts.create(entity.id,contact,actor);return view(entity);
+        accounts.save(entity);events.record(new BusinessEvent.AccountCreated(entity.id),actor);com.brandempiricism.etocrm.commons.DiagnosticEvents.afterCommit(com.brandempiricism.etocrm.commons.DiagnosticEvents.Event.ACCOUNT_CREATED,entity.id);for(var contact:safe(command.contacts()))contacts.create(entity.id,contact,actor);return view(entity);
     }
     @Override public AccountRef getAccount(UUID id){return view(accounts.findById(id).orElseThrow(()->new com.brandempiricism.etocrm.commons.ResourceNotFoundException()));}
     List<AccountRef> list(){return accounts.findAll().stream().map(AccountService::view).toList();}

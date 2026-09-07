@@ -153,3 +153,14 @@ Story #28 remains open by product decision until #25 provides the outbox
 dispatcher and its tenant/correlation propagation tests. This batch does not
 introduce an outbox, fleet migration scheduler, production secret store, or
 durable audit expansion.
+
+## Atomic journal slice (#38)
+
+The first #25 slice now records account, signal, and saved capability-match
+facts through the `events.BusinessEventPublisher` port. Facts commit atomically
+with business state in `tenant_event_journal`, separately from the diagnostic
+logs described above. The journal preserves available correlation but does not
+yet dispatch or replay anything. See
+`../features/CRM-001-prospect-capability-match/event-journal-decision.md` for
+version-one payloads, authorization, development-mode limits, and acceptance
+examples. #25 and #28 remain open for their deferred criteria.

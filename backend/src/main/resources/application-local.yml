@@ -12,6 +12,7 @@ eto:
       username: ${PLATFORM_DATABASE_USERNAME:eto_crm_platform}
       password: ${PLATFORM_DATABASE_PASSWORD:local-platform-only}
   tenancy:
+    development-tenant-id: 33333333-3333-3333-3333-333333333333
     initial-client:
       database-password: ${DATABASE_PASSWORD:local-r-hyper-tooling-only}
     provisioning:
