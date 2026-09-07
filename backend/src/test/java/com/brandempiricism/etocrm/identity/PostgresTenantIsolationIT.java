@@ -366,6 +366,111 @@ class PostgresTenantIsolationIT {
         return json.readTree(response.getContentAsString()).get("id").asText();
     }
 
+    @Test
+    void concurrentProspectingWritesCommitFactsOnlyInTheirVerifiedTenantDatabase() throws Exception {
+        String workflowA = UUID.randomUUID().toString();
+        String workflowB = UUID.randomUUID().toString();
+        try (var executor = Executors.newFixedThreadPool(2)) {
+            var writes = executor.invokeAll(List.of(
+                () -> mvc.perform(post("/api/prospecting/matches").header("Authorization", "Bearer user-a")
+                    .header("X-Tenant-Id", A).header("X-Actor", "forged-user").header("X-Request-Id", workflowA)
+                    .header("X-Business-Transaction-Id", workflowA).contentType(MediaType.APPLICATION_JSON)
+                    .content(journalWalking(workflowA, "11111111-1111-1111-1111-111111111111")))
+                    .andExpect(status().isOk()).andReturn(),
+                () -> mvc.perform(post("/api/prospecting/matches").header("Authorization", "Bearer user-b")
+                    .header("X-Tenant-Id", B).header("X-Request-Id", workflowB).header("X-Business-Transaction-Id", workflowB)
+                    .contentType(MediaType.APPLICATION_JSON).content(journalWalking(workflowB, "11111111-1111-1111-1111-111111111111")))
+                    .andExpect(status().isOk()).andReturn()));
+            for (var write : writes) write.get();
+            for (var client : List.of(new Tenant(A, DATABASE_A, "user-a"), new Tenant(B, DATABASE_B, "user-b"))) {
+                String own = client.id().equals(A) ? workflowA : workflowB;
+                String other = client.id().equals(A) ? workflowB : workflowA;
+                var database = tenant(client.name());
+                var facts = database.queryForList("select * from tenant_event_journal where business_transaction_id=?", own);
+                assertThat(facts).hasSize(3).extracting(row -> row.get("event_type"))
+                    .containsExactlyInAnyOrder("account.created", "signal.recorded", "capability_match.saved");
+                for (var fact : facts) {
+                    assertThat(fact.get("tenant_id")).isEqualTo(client.id());
+                    assertThat(fact.get("actor_id")).isEqualTo(client.user());
+                    assertThat(fact.get("request_id")).isEqualTo(own);
+                    assertThat(fact.get("schema_version")).isEqualTo(1);
+                    assertThat(fact.get("trace_id").toString()).hasSize(32);
+                    assertThat(fact.get("payload").toString()).doesNotContain("canary", "forged-user", DATABASE_A, DATABASE_B);
+                    assertThat(json.readTree(fact.get("payload").toString()).isObject()).isTrue();
+                }
+                assertThat(database.queryForObject("select count(*) from tenant_event_journal where business_transaction_id=?", Integer.class, other)).isZero();
+                assertThat(database.queryForObject("select count(*) from account where name=?", Integer.class, own)).isEqualTo(1);
+                assertThat(database.queryForObject("select count(*) from account where name=?", Integer.class, other)).isZero();
+            }
+            assertThat(platform.queryForObject("select count(*) from information_schema.tables where table_name='tenant_event_journal'", Integer.class)).isZero();
+        } finally {
+            cleanJournalWorkflow(DATABASE_A, workflowA);
+            cleanJournalWorkflow(DATABASE_B, workflowB);
+        }
+    }
+
+    @Test
+    void postgresJournalInsertFailureRollsBackStandaloneSignal() throws Exception {
+        String workflow = UUID.randomUUID().toString();
+        var database = tenant(DATABASE_A);
+        rejectJournalFact(database, workflow, "signal.recorded");
+        try {
+            mvc.perform(post("/api/accounts/{id}/signals", SHARED_RECORD).header("Authorization", "Bearer user-a")
+                    .header("X-Tenant-Id", A).header("X-Business-Transaction-Id", workflow)
+                    .contentType(MediaType.APPLICATION_JSON).content(json.writeValueAsString(java.util.Map.of(
+                        "source", "source-canary", "observedOn", "2026-09-07", "observedFact", workflow))))
+                .andExpect(status().isInternalServerError());
+            assertThat(database.queryForObject("select count(*) from prospect_signal where observed_fact=?", Integer.class, workflow)).isZero();
+            assertThat(database.queryForObject("select count(*) from tenant_event_journal where business_transaction_id=?", Integer.class, workflow)).isZero();
+        } finally { database.execute("alter table tenant_event_journal drop constraint journal_acceptance_rejection"); }
+    }
+
+    @Test
+    void postgresFinalJournalFailureRollsBackEarlierFactsAndBusinessState() throws Exception {
+        String workflow = UUID.randomUUID().toString();
+        var database = tenant(DATABASE_A);
+        rejectJournalFact(database, workflow, "capability_match.saved");
+        try {
+            mvc.perform(post("/api/prospecting/matches").header("Authorization", "Bearer user-a").header("X-Tenant-Id", A)
+                    .header("X-Business-Transaction-Id", workflow).contentType(MediaType.APPLICATION_JSON)
+                    .content(journalWalking(workflow, "11111111-1111-1111-1111-111111111111")))
+                .andExpect(status().isInternalServerError());
+            assertThat(database.queryForObject("select count(*) from account where name=?", Integer.class, workflow)).isZero();
+            assertThat(database.queryForObject("select count(*) from capability_match where account_name=?", Integer.class, workflow)).isZero();
+            assertThat(database.queryForObject("select count(*) from tenant_event_journal where business_transaction_id=?", Integer.class, workflow)).isZero();
+        } finally { database.execute("alter table tenant_event_journal drop constraint journal_acceptance_rejection"); }
+    }
+
+    @Test
+    void postgresRejectedCapabilityLeavesNoJournalFacts() throws Exception {
+        String workflow = UUID.randomUUID().toString();
+        mvc.perform(post("/api/prospecting/matches").header("Authorization", "Bearer user-a").header("X-Tenant-Id", A)
+                .header("X-Business-Transaction-Id", workflow).contentType(MediaType.APPLICATION_JSON)
+                .content(journalWalking(workflow, "22222222-2222-2222-2222-222222222222")))
+            .andExpect(status().isUnprocessableEntity());
+        assertThat(tenant(DATABASE_A).queryForObject("select count(*) from tenant_event_journal where business_transaction_id=?", Integer.class, workflow)).isZero();
+        assertThat(tenant(DATABASE_A).queryForObject("select count(*) from account where name=?", Integer.class, workflow)).isZero();
+    }
+
+    private static String journalWalking(String name, String capability) {
+        return """
+            {"accountName":"%s","industry":"industry-canary","location":"location-canary",
+             "capabilityId":"%s","source":"source-canary","observedOn":"2026-09-07","observedFact":"fact-canary",
+             "owner":"owner-canary","hypothesis":"hypothesis-canary","nextAction":"action-canary","nextActionDate":"2026-09-10"}
+            """.formatted(name, capability);
+    }
+    private static void rejectJournalFact(JdbcTemplate database, String workflow, String type) {
+        database.execute("alter table tenant_event_journal add constraint journal_acceptance_rejection check (business_transaction_id <> '"
+            + workflow + "' or event_type <> '" + type + "')");
+    }
+    private static void cleanJournalWorkflow(String databaseName, String workflow) {
+        var database = tenant(databaseName);
+        database.update("delete from tenant_event_journal where business_transaction_id=?", workflow);
+        database.update("delete from capability_match where account_id in (select id from account where name=?)", workflow);
+        database.update("delete from prospect_signal where account_id in (select id from account where name=?)", workflow);
+        database.update("delete from account where name=?", workflow);
+    }
+
     private void notFound(org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder request, String user, UUID tenant) throws Exception {
         mvc.perform(request.header("Authorization", "Bearer " + user).header("X-Tenant-Id", tenant).header("X-Request-Id", "ownership-check"))
             .andExpect(status().isNotFound())

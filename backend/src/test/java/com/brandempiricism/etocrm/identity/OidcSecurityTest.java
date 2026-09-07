@@ -35,6 +35,7 @@ class OidcSecurityTest {
     @MockitoBean JwtDecoder decoder;
     @org.springframework.test.context.bean.override.mockito.MockitoSpyBean IdentityApplicationApi identities;
     @Autowired @Qualifier("tenantJdbcTemplate") JdbcTemplate tenantDatabase;
+    @Autowired com.brandempiricism.etocrm.events.BusinessEventPublisher eventPublisher;
 
     @BeforeEach
     void activeMembership() {
@@ -246,5 +247,18 @@ class OidcSecurityTest {
         when(decoder.decode("valid-token")).thenReturn(Jwt.withTokenValue("valid-token")
             .header("alg", "RS256").subject("oidc-user").issuedAt(now).expiresAt(now.plusSeconds(300))
             .claim("roles", List.of("BUSINESS_DEVELOPMENT")).build());
+    }
+
+    @Test
+    void configuredDevelopmentTenantCannotSubstituteForVerifiedOidcMembership() {
+        var authentication = new org.springframework.security.authentication.UsernamePasswordAuthenticationToken(
+            "oidc-user", null, List.of(new org.springframework.security.core.authority.SimpleGrantedAuthority("crm:write")));
+        org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(authentication);
+        try {
+            assertThat(TenantContextHolder.current()).isEmpty();
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> eventPublisher.record(
+                new com.brandempiricism.etocrm.events.BusinessEvent.AccountCreated(UUID.randomUUID()), "oidc-user"))
+                .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+        } finally { org.springframework.security.core.context.SecurityContextHolder.clearContext(); }
     }
 }

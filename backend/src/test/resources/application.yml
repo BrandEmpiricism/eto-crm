@@ -9,6 +9,8 @@ spring:
     hibernate:
       ddl-auto: validate
 eto:
+  tenancy:
+    development-tenant-id: 33333333-3333-3333-3333-333333333333
   security:
     mode: actor-header
   platform:
