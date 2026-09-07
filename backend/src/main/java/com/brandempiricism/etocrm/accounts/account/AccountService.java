@@ -17,7 +17,7 @@ public class AccountService implements AccountApplicationApi {
     AccountService(AccountRepository accounts,ContactService contacts){this.accounts=accounts;this.contacts=contacts;}
     @Override @Transactional @PreAuthorize("@tenantAuthorization.canWrite(authentication, #actor)") public AccountRef createAccount(CreateAccount command,String actor){
         var now=Instant.now();var entity=new AccountEntity(UUID.randomUUID(),required(command.name()),required(command.industry()),required(command.location()),website(command.website()),clean(command.owner()),clean(command.summary()),now,actor);
-        accounts.save(entity);for(var contact:safe(command.contacts()))contacts.create(entity.id,contact,actor);return view(entity);
+        accounts.save(entity);com.brandempiricism.etocrm.commons.DiagnosticEvents.afterCommit(com.brandempiricism.etocrm.commons.DiagnosticEvents.Event.ACCOUNT_CREATED,entity.id);for(var contact:safe(command.contacts()))contacts.create(entity.id,contact,actor);return view(entity);
     }
     @Override public AccountRef getAccount(UUID id){return view(accounts.findById(id).orElseThrow(()->new com.brandempiricism.etocrm.commons.ResourceNotFoundException()));}
     List<AccountRef> list(){return accounts.findAll().stream().map(AccountService::view).toList();}

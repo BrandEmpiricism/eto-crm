@@ -58,7 +58,7 @@ public class SecurityConfiguration {
                 SecurityContextHolder.getContext().setAuthentication(
                         new UsernamePasswordAuthenticationToken(actor.trim(), null, authorities));
             }
-            try { chain.doFilter(request, response); } finally { MDC.remove("actorId"); }
+            chain.doFilter(request, response);
         }
     }
 }

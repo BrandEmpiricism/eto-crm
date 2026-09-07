@@ -103,14 +103,52 @@ class PostgresTenantIsolationIT {
 
     @Test
     void sameRecordIdentifierResolvesOnlyWithinSelectedTenantEvenConcurrently() throws Exception {
-        try (var executor = Executors.newFixedThreadPool(2)) {
+        try (var executor = Executors.newFixedThreadPool(2);
+             var logs = new com.brandempiricism.etocrm.commons.observability.LogCapture()) {
             var requests = executor.invokeAll(List.of(
-                () -> mvc.perform(get("/api/accounts/" + SHARED_RECORD).header("Authorization", "Bearer user-a").header("X-Tenant-Id", A))
+                () -> mvc.perform(get("/api/accounts/" + SHARED_RECORD).header("Authorization", "Bearer user-a").header("X-Tenant-Id", A).header("X-Request-Id", "request-a"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.name").value("Tenant A account")),
-                () -> mvc.perform(get("/api/accounts/" + SHARED_RECORD).header("Authorization", "Bearer user-b").header("X-Tenant-Id", B))
+                () -> mvc.perform(get("/api/accounts/" + SHARED_RECORD).header("Authorization", "Bearer user-b").header("X-Tenant-Id", B).header("X-Request-Id", "request-b"))
                     .andExpect(status().isOk()).andExpect(jsonPath("$.name").value("Tenant B account"))));
             for (var result : requests) result.get();
+            assertThat(logs.events("http.request.completed")).hasSize(2).allSatisfy(event -> {
+                boolean first = event.path("requestId").asText().equals("request-a");
+                assertThat(event.path("tenantId").asText()).isEqualTo((first ? A : B).toString());
+                assertThat(event.path("actorId").asText()).isEqualTo(first ? "user-a" : "user-b");
+            });
+            assertThat(logs.output()).doesNotContain(DATABASE_A, DATABASE_B, TENANT_PASSWORD, ADMIN_URL, "Tenant A account", "Tenant B account");
         }
+    }
+
+    @Test
+    void routingFailureAfterVerifiedMembershipReturnsSafeCorrelatedProblem() throws Exception {
+        var tenant = UUID.randomUUID();
+        var name = "failed_" + tenant.toString().replace("-", "");
+        var now = java.sql.Timestamp.from(Instant.now());
+        platform.update("insert into tenant_registry(id,slug,display_name,database_name,credential_secret_ref,status,provisioning_step,idempotency_key,created_at,created_by,updated_at,updated_by) "
+            + "values (?,?,?,?,?,'ACTIVE','COMPLETE',?,?, 'fixture',?, 'fixture')", tenant, name, name, name, name, name, now, now);
+        platform.update("insert into tenant_membership(identity_id,tenant_id,role,status,created_at,updated_at) values ('user-a',?,'TENANT_ADMIN','ACTIVE',?,?)", tenant, now, now);
+        when(credentials.resolve(name)).thenThrow(new IllegalStateException("jdbc:postgresql://host-canary/db password-canary"));
+        try (var logs = new com.brandempiricism.etocrm.commons.observability.LogCapture()) {
+            mvc.perform(get("/api/accounts").header("Authorization", "Bearer user-a").header("X-Tenant-Id", tenant)
+                    .header("X-Request-Id", "failed-route-request"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.requestId").value("failed-route-request"))
+                .andExpect(jsonPath("$.detail").value("The requested service is temporarily unavailable."));
+            assertThat(logs.events("tenant.database.failed")).isNotEmpty().allSatisfy(event -> {
+                assertThat(event.path("tenantId").asText()).isEqualTo(tenant.toString());
+                assertThat(event.path("actorId").asText()).isEqualTo("user-a");
+                assertThat(event.path("requestId").asText()).isEqualTo("failed-route-request");
+                assertThat(event.path("databaseRouteId").asText()).isEqualTo("tenant:" + tenant);
+            });
+            assertThat(logs.output()).doesNotContain("canary", name, "jdbc:");
+        } finally {
+            platform.update("delete from identity_audit_record where tenant_id=?", tenant);
+            platform.update("delete from tenant_membership where tenant_id=?", tenant);
+            platform.update("delete from tenant_registry where id=?", tenant);
+        }
+        assertThat(TenantContextHolder.current()).isEmpty();
+        assertThat(org.slf4j.MDC.getCopyOfContextMap()).isNullOrEmpty();
     }
 
     @Test

@@ -45,4 +45,24 @@ class TenantPoolFactoryTest {
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessage("Tenant database server must be a PostgreSQL JDBC URL.");
     }
+
+    @Test void secretProviderFailureIsCorrelatedWithoutDisclosingHostOrCredentials() {
+        var tenant = UUID.randomUUID();
+        when(routing.resolve(tenant)).thenReturn(new TenantDatabaseRoutingApi.TenantDatabaseRoute(tenant, "eto_crm_test", "secret-canary"));
+        when(secrets.resolve("secret-canary")).thenThrow(new IllegalStateException("jdbc:postgresql://host-canary/db password-canary"));
+        var factory = new TenantPoolFactory(routing, secrets, "jdbc:postgresql://host-canary/db", 2, source -> {});
+        try (var logs = new com.brandempiricism.etocrm.commons.observability.LogCapture();
+             var context = com.brandempiricism.etocrm.commons.DiagnosticContext.start(
+                 new com.brandempiricism.etocrm.commons.DiagnosticContext.Correlation("route-request", null, "route-workflow"))) {
+            assertThatThrownBy(() -> factory.create(tenant))
+                .isInstanceOf(com.brandempiricism.etocrm.commons.ServiceUnavailableException.class)
+                .hasMessage("Tenant database readiness or schema compatibility verification failed.");
+            var event = logs.events("tenant.database.failed").getFirst();
+            assertThat(event.path("tenantId").asText()).isEqualTo(tenant.toString());
+            assertThat(event.path("databaseRouteId").asText()).isEqualTo("tenant:" + tenant);
+            assertThat(event.path("requestId").asText()).isEqualTo("route-request");
+            assertThat(logs.output()).doesNotContain("canary", "jdbc:");
+            assertThat(org.slf4j.MDC.get("tenantId")).isNull();
+        }
+    }
 }

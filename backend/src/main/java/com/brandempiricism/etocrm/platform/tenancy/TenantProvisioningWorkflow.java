@@ -6,8 +6,10 @@ import java.time.Instant;
 import java.util.UUID;
 import com.brandempiricism.etocrm.commons.ServiceUnavailableException;
 import com.brandempiricism.etocrm.identity.IdentityApplicationApi;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.brandempiricism.etocrm.commons.DiagnosticContext;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents.Event;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents.Outcome;
 import org.springframework.stereotype.Service;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -15,8 +17,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 
 @Service
 class TenantProvisioningWorkflow {
-    private static final Logger LOG = LoggerFactory.getLogger(TenantProvisioningWorkflow.class);
-
     private final TenantRegistryRepository tenants;
     private final TenantProvisioningInfrastructure infrastructure;
     private final IdentityApplicationApi identities;
@@ -34,8 +34,16 @@ class TenantProvisioningWorkflow {
 
     @PreAuthorize("hasAuthority('platform:operate') and #actorId == authentication.name")
     TenantProvisioningService.TenantView provision(UUID tenantId, String actorId) {
+        var tenant = load(tenantId);
+        try (var correlation = DiagnosticContext.start(DiagnosticContext.capture());
+             var identity = DiagnosticContext.forTenant(tenantId, actorId)) {
+            return provisionInContext(tenant, actorId);
+        }
+    }
+
+    private TenantProvisioningService.TenantView provisionInContext(TenantRegistryEntity tenant, String actorId) {
+        var tenantId = tenant.id;
         try {
-            var tenant = load(tenantId);
             if (tenant.status == TenantStatus.ACTIVE) return TenantProvisioningService.view(tenant);
 
             if (tenant.provisioningStep == REGISTERED) {
@@ -43,7 +51,7 @@ class TenantProvisioningWorkflow {
                 tenant = advance(tenantId, DATABASE_ALLOCATED, allocation.credentialSecretRef(), actorId);
             }
             if (tenant.provisioningStep == DATABASE_ALLOCATED) {
-                infrastructure.migrate(spec(tenant), requiredSecret(tenant));
+                migrate(tenant);
                 tenant = advance(tenantId, MIGRATED, null, actorId);
             }
             if (tenant.provisioningStep == MIGRATED) {
@@ -63,7 +71,19 @@ class TenantProvisioningWorkflow {
             }
             return TenantProvisioningService.view(tenant);
         } catch (RuntimeException failure) {
+            DiagnosticEvents.emit(Event.PROVISIONING_FAILED, Outcome.failure, failure);
             recordFailure(tenantId, failure, actorId);
+            throw failure;
+        }
+    }
+
+    private void migrate(TenantRegistryEntity tenant) {
+        long started = System.nanoTime();
+        try {
+            infrastructure.migrate(spec(tenant), requiredSecret(tenant));
+            DiagnosticEvents.finished(Event.MIGRATION_COMPLETED, Outcome.success, started, 0, null);
+        } catch (RuntimeException failure) {
+            DiagnosticEvents.finished(Event.MIGRATION_COMPLETED, Outcome.failure, started, 0, failure);
             throw failure;
         }
     }
@@ -80,7 +100,7 @@ class TenantProvisioningWorkflow {
             if (secretRef != null) tenant.credentialSecretRef = secretRef;
             tenant.failureCode = null;
             touch(tenant, actor);
-            log("tenant.provisioning.step_completed", tenant, step.name());
+            DiagnosticEvents.afterCommit(Event.PROVISIONING_STEP, tenant.id);
             return tenants.save(tenant);
         });
     }
@@ -92,7 +112,7 @@ class TenantProvisioningWorkflow {
             tenant.status = TenantStatus.ACTIVE;
             tenant.failureCode = null;
             touch(tenant, actor);
-            log("tenant.provisioning.activated", tenant, COMPLETE.name());
+            DiagnosticEvents.afterCommit(Event.PROVISIONING_ACTIVATED, tenant.id);
             return tenants.save(tenant);
         });
     }
@@ -103,11 +123,6 @@ class TenantProvisioningWorkflow {
                 ? "INFRASTRUCTURE_UNAVAILABLE" : "STEP_FAILED";
             touch(tenant, actor);
             tenants.save(tenant);
-            LOG.atWarn().addKeyValue("event.name", "tenant.provisioning.failed")
-                .addKeyValue("tenantId", tenant.id)
-                .addKeyValue("provisioningStep", tenant.provisioningStep)
-                .addKeyValue("failureCode", tenant.failureCode)
-                .log("Tenant provisioning step failed");
         }));
     }
 
@@ -127,10 +142,4 @@ class TenantProvisioningWorkflow {
         tenant.updatedBy = actor;
     }
 
-    private static void log(String event, TenantRegistryEntity tenant, String step) {
-        LOG.atInfo().addKeyValue("event.name", event)
-            .addKeyValue("tenantId", tenant.id)
-            .addKeyValue("provisioningStep", step)
-            .log("Tenant provisioning advanced");
-    }
 }

@@ -1,6 +1,10 @@
 package com.brandempiricism.etocrm.platform.tenancy;
 
 import com.brandempiricism.etocrm.commons.TenantDataSourceFactory;
+import com.brandempiricism.etocrm.commons.DiagnosticContext;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents.Event;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents.Outcome;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import java.util.UUID;
@@ -37,21 +41,31 @@ public final class TenantPoolFactory implements TenantDataSourceFactory {
     @Override
     public DataSource create(UUID tenantId) {
         var route = routing.resolve(tenantId);
-        var secret = credentials.resolve(route.credentialSecretRef());
-        var configuration = new HikariConfig();
-        configuration.setJdbcUrl(databaseUrl(databaseServerUrl, route.databaseName()));
-        configuration.setUsername(secret.username());
-        configuration.setPassword(secret.password());
-        configuration.setMaximumPoolSize(maximumPoolSize);
-        configuration.setMinimumIdle(0);
-        configuration.setInitializationFailTimeout(-1);
-        configuration.setPoolName("tenant-" + tenantId);
-        var pool = new HikariDataSource(configuration);
+        try (var context = DiagnosticContext.forTenant(route.tenantId(), null)) {
+            return createVerifiedPool(tenantId, route);
+        }
+    }
+
+    private DataSource createVerifiedPool(UUID tenantId, TenantDatabaseRoutingApi.TenantDatabaseRoute route) {
+        HikariDataSource pool = null;
+        long started = System.nanoTime();
         try {
+            var secret = credentials.resolve(route.credentialSecretRef());
+            var configuration = new HikariConfig();
+            configuration.setJdbcUrl(databaseUrl(databaseServerUrl, route.databaseName()));
+            configuration.setUsername(secret.username());
+            configuration.setPassword(secret.password());
+            configuration.setMaximumPoolSize(maximumPoolSize);
+            configuration.setMinimumIdle(0);
+            configuration.setInitializationFailTimeout(-1);
+            configuration.setPoolName("tenant-" + tenantId);
+            pool = new HikariDataSource(configuration);
             schemaVerifier.accept(pool);
+            DiagnosticEvents.finished(Event.ROUTE_ACCEPTED, Outcome.success, started, 0, null);
             return pool;
         } catch (RuntimeException failure) {
-            pool.close();
+            DiagnosticEvents.finished(Event.ROUTE_FAILED, Outcome.failure, started, 0, failure);
+            if (pool != null) pool.close();
             throw new ServiceUnavailableException("Tenant database readiness or schema compatibility verification failed.");
         }
     }

@@ -40,10 +40,32 @@ class ProspectingWalkingSliceTest {
     }
 
     @Test void inactiveCapabilityCannotActivateAMatch() throws Exception {
+        try (var logs = new com.brandempiricism.etocrm.commons.observability.LogCapture()) {
         mvc.perform(post("/api/prospecting/matches").header("X-Actor", "asha")
                 .contentType(MediaType.APPLICATION_JSON).content(completeRequest("22222222-2222-2222-2222-222222222222")))
                 .andExpect(status().isUnprocessableEntity())
                 .andExpect(jsonPath("$.detail").value("Select an active capability before activating this match."));
+            for (String event : java.util.List.of("account.created", "signal.recorded", "capability_match.saved")) {
+                org.assertj.core.api.Assertions.assertThat(logs.events(event)).isEmpty();
+            }
+        }
+    }
+
+    @Test void committedWalkingSliceSharesOneBusinessCorrelationWithoutCustomerContent() throws Exception {
+        try (var logs = new com.brandempiricism.etocrm.commons.observability.LogCapture()) {
+            mvc.perform(post("/api/prospecting/matches").header("X-Actor", "asha")
+                    .header("X-Request-Id", "walking-request").header("X-Business-Transaction-Id", "walking-workflow")
+                    .contentType(MediaType.APPLICATION_JSON).content(completeRequest("11111111-1111-1111-1111-111111111111")))
+                .andExpect(status().isOk());
+            for (String name : java.util.List.of("account.created", "signal.recorded", "capability_match.saved")) {
+                org.assertj.core.api.Assertions.assertThat(logs.events(name)).hasSize(1).allSatisfy(event -> {
+                    org.assertj.core.api.Assertions.assertThat(event.path("requestId").asText()).isEqualTo("walking-request");
+                    org.assertj.core.api.Assertions.assertThat(event.path("businessTransactionId").asText()).isEqualTo("walking-workflow");
+                    org.assertj.core.api.Assertions.assertThat(event.path("event.outcome").asText()).isEqualTo("success");
+                });
+            }
+            org.assertj.core.api.Assertions.assertThat(logs.output()).doesNotContain("Northstar", "Expansion permit", "Changeovers", "Asha Patel");
+        }
     }
 
     @Test void stateChangeRequiresAnAuthenticatedActor() throws Exception {

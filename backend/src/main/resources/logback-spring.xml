@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+    <springProfile name="local | test">
+        <property name="SAFE_LOG_FORMAT" value="text"/>
+    </springProfile>
+    <springProfile name="!local &amp; !test">
+        <property name="SAFE_LOG_FORMAT" value="json"/>
+    </springProfile>
+    <appender name="CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="com.brandempiricism.etocrm.commons.observability.SafeLogEncoder">
+            <format>${SAFE_LOG_FORMAT}</format>
+        </encoder>
+    </appender>
+    <root level="INFO">
+        <appender-ref ref="CONSOLE"/>
+    </root>
+</configuration>

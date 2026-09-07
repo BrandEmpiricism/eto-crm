@@ -1,5 +1,9 @@
 package com.brandempiricism.etocrm.identity;
 
+import com.brandempiricism.etocrm.commons.DiagnosticContext;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents.Event;
+import com.brandempiricism.etocrm.commons.DiagnosticEvents.Outcome;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
@@ -36,8 +40,9 @@ class OidcSecurityConfiguration {
         converter.setPrincipalClaimName("sub");
         converter.setJwtGrantedAuthoritiesConverter(jwt -> {
             var authorities = new LinkedHashSet<GrantedAuthority>();
-            Collection<String> roles = jwt.getClaimAsStringList("roles");
-            if (roles != null) roles.stream().map(OidcSecurityConfiguration::knownRole)
+            Object roles = jwt.getClaims().get("roles");
+            if (roles instanceof Collection<?> values) values.stream().filter(String.class::isInstance)
+                .map(String.class::cast).map(OidcSecurityConfiguration::knownRole)
                 .flatMap(Optional::stream).flatMap(role -> role.permissions().stream())
                 .filter(Permissions.PLATFORM_OPERATE::equals)
                 .map(SimpleGrantedAuthority::new).forEach(authorities::add);
@@ -55,8 +60,13 @@ class OidcSecurityConfiguration {
                 .requestMatchers("/api/**").authenticated().anyRequest().permitAll())
             .oauth2ResourceServer(resource -> resource.jwt(jwt -> jwt.jwtAuthenticationConverter(converter))
                 .authenticationEntryPoint((request, response, failure) -> unauthorized(response, json)))
-            .addFilterAfter(new TenantMembershipFilter(identities, json), BearerTokenAuthenticationFilter.class)
+            .exceptionHandling(errors -> errors.authenticationEntryPoint((request, response, failure) -> unauthorized(response, json))
+                .accessDeniedHandler((request, response, failure) -> {
+                    DiagnosticEvents.emit(Event.AUTHORIZATION_REJECTED, Outcome.rejected);
+                    problem(response, json, 403, "Access denied", "The requested operation is not permitted.");
+                }))
             .addFilterAfter(new AuthenticatedActorCorrelationFilter(), BearerTokenAuthenticationFilter.class)
+            .addFilterAfter(new TenantMembershipFilter(identities, json), AuthenticatedActorCorrelationFilter.class)
             .build();
     }
 
@@ -69,6 +79,7 @@ class OidcSecurityConfiguration {
     }
 
     private static void unauthorized(HttpServletResponse response, ObjectMapper json) throws IOException {
+        DiagnosticEvents.emit(Event.AUTHENTICATION_REJECTED, Outcome.rejected);
         var detail = ProblemDetail.forStatus(401);
         detail.setTitle("Authentication failed");
         detail.setDetail("A valid bearer token is required.");
@@ -85,8 +96,11 @@ class OidcSecurityConfiguration {
                                         HttpServletResponse response,
                                         jakarta.servlet.FilterChain chain) throws jakarta.servlet.ServletException, IOException {
             var authentication = org.springframework.security.core.context.SecurityContextHolder.getContext().getAuthentication();
-            if (authentication != null && authentication.isAuthenticated()) MDC.put("actorId", authentication.getName());
-            try { chain.doFilter(request, response); } finally { MDC.remove("actorId"); }
+            if (authentication instanceof JwtAuthenticationToken && authentication.isAuthenticated()) {
+                DiagnosticContext.verifiedIdentity(authentication.getName(), null);
+                DiagnosticEvents.emit(Event.AUTHENTICATED, Outcome.success);
+            }
+            chain.doFilter(request, response);
         }
     }
 
@@ -126,24 +140,41 @@ class OidcSecurityConfiguration {
                 org.springframework.security.core.context.SecurityContextHolder.getContext().setAuthentication(
                     new JwtAuthenticationToken(jwt.getToken(), authorities, authentication.getName()));
                 TenantContextHolder.bind(context);
-                MDC.put("tenantId", tenantId.toString());
-                chain.doFilter(request, response);
+                DiagnosticContext.verifiedIdentity(authentication.getName(), tenantId);
+                DiagnosticEvents.emit(Event.MEMBERSHIP_ACCEPTED, Outcome.success);
             } catch (IllegalArgumentException | TenantAccessDeniedException denied) {
                 forbidden(response, json);
+                return;
+            } catch (org.springframework.dao.DataAccessException | org.springframework.transaction.TransactionException unavailable) {
+                DiagnosticEvents.emit(Event.MEMBERSHIP_UNAVAILABLE, Outcome.failure, unavailable);
+                problem(response, json, 503, "Service unavailable", "Identity verification is temporarily unavailable.");
+                return;
+            }
+            try {
+                chain.doFilter(request, response);
             } finally {
                 TenantContextHolder.clear();
-                MDC.remove("tenantId");
             }
         }
     }
 
     private static void forbidden(HttpServletResponse response, ObjectMapper json) throws IOException {
+        DiagnosticEvents.emit(Event.MEMBERSHIP_REJECTED, Outcome.rejected);
         var detail = ProblemDetail.forStatus(403);
         detail.setTitle("Tenant access denied");
         detail.setDetail("An active company membership is required.");
         detail.setType(URI.create("https://eto-crm.example/problems/tenant-access-denied"));
         detail.setProperty("requestId", MDC.get("requestId"));
         response.setStatus(403);
+        response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
+        json.writeValue(response.getOutputStream(), detail);
+    }
+
+    private static void problem(HttpServletResponse response, ObjectMapper json, int status, String title, String message) throws IOException {
+        var detail = ProblemDetail.forStatusAndDetail(org.springframework.http.HttpStatusCode.valueOf(status), message);
+        detail.setTitle(title);
+        detail.setProperty("requestId", MDC.get("requestId"));
+        response.setStatus(status);
         response.setContentType(MediaType.APPLICATION_PROBLEM_JSON_VALUE);
         json.writeValue(response.getOutputStream(), detail);
     }

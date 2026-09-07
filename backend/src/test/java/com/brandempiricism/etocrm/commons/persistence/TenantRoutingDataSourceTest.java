@@ -20,7 +20,7 @@ class TenantRoutingDataSourceTest {
     @AfterEach void clearContext() { TenantContextHolder.clear(); }
 
     @Test void tenantDataAccessFailsClosedWithoutVerifiedContext() {
-        var router = new TenantRoutingDataSource(tenant -> mock(DataSource.class), 2);
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), tenant -> mock(DataSource.class), 2);
         assertThatThrownBy(router::getConnection)
             .isInstanceOf(java.sql.SQLException.class)
             .hasMessage("Verified tenant context is required.");
@@ -34,7 +34,7 @@ class TenantRoutingDataSourceTest {
         var secondConnection = mock(Connection.class);
         pools.put(firstTenant, pool(firstConnection));
         pools.put(secondTenant, pool(secondConnection));
-        var router = new TenantRoutingDataSource(pools::get, 2);
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), pools::get, 2);
 
         bind(firstTenant);
         try (var connection = router.getConnection()) { connection.commit(); }
@@ -52,7 +52,7 @@ class TenantRoutingDataSourceTest {
         var secondPool = mock(CloseableDataSource.class);
         when(firstPool.getConnection()).thenReturn(mock(Connection.class));
         when(secondPool.getConnection()).thenReturn(mock(Connection.class));
-        var router = new TenantRoutingDataSource(id -> id.equals(firstTenant) ? firstPool : secondPool, 1);
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), id -> id.equals(firstTenant) ? firstPool : secondPool, 1);
 
         bind(firstTenant);
         router.getConnection().close();
@@ -63,7 +63,7 @@ class TenantRoutingDataSourceTest {
     }
 
     @Test void callersCannotOverrideServerControlledCredentials() {
-        var router = new TenantRoutingDataSource(tenant -> mock(DataSource.class), 1);
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), tenant -> mock(DataSource.class), 1);
         assertThatThrownBy(() -> router.getConnection("caller", "secret"))
             .hasMessage("Caller-supplied tenant database credentials are not permitted.");
     }
@@ -73,7 +73,7 @@ class TenantRoutingDataSourceTest {
         var second = UUID.randomUUID();
         var source = mock(CloseableDataSource.class);
         when(source.getConnection()).thenReturn(mock(Connection.class));
-        var router = new TenantRoutingDataSource(id -> source, 1);
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), id -> source, 1);
         bind(first);
         var lease = router.getConnection();
         TenantContextHolder.clear();
@@ -95,7 +95,7 @@ class TenantRoutingDataSourceTest {
         when(first.getConnection()).thenReturn(mock(Connection.class));
         when(replacement.getConnection()).thenReturn(mock(Connection.class));
         var creations = new java.util.concurrent.atomic.AtomicInteger();
-        var router = new TenantRoutingDataSource(id -> creations.incrementAndGet() == 1 ? first : replacement,
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), id -> creations.incrementAndGet() == 1 ? first : replacement,
             1, java.time.Duration.ofMinutes(5), clock);
         var tenant = UUID.randomUUID();
         bind(tenant);
@@ -115,7 +115,7 @@ class TenantRoutingDataSourceTest {
     @Test void shutdownDrainsLeasedConnectionsAndCannotReopenPools() throws Exception {
         var source = mock(CloseableDataSource.class);
         when(source.getConnection()).thenReturn(mock(Connection.class));
-        var router = new TenantRoutingDataSource(id -> source, 1);
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), id -> source, 1);
         bind(UUID.randomUUID());
         var lease = router.getConnection();
         router.close();
@@ -134,7 +134,7 @@ class TenantRoutingDataSourceTest {
         var source = mock(CloseableDataSource.class);
         when(source.getConnection()).thenReturn(mock(Connection.class));
         var creations = new java.util.concurrent.atomic.AtomicInteger();
-        var router = new TenantRoutingDataSource(id -> { creations.incrementAndGet(); return source; },
+        var router = new TenantRoutingDataSource(new com.brandempiricism.etocrm.identity.VerifiedTenantExecutionContext(), id -> { creations.incrementAndGet(); return source; },
             1, java.time.Duration.ofMinutes(5), clock);
         var tenant = UUID.randomUUID();
         bind(tenant);
